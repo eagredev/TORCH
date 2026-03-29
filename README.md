@@ -1,6 +1,6 @@
 # TORCH
 
-**The Open ROM Creation Hub** — a TorScript compiler, sync engine, data editors, and localhost web IDE for [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion) ROM hacks.
+**The Open ROM Creation Hub** — a TorScript compiler, sync engine, data editors, and localhost web IDE for [pokeemerald](https://github.com/pret/pokeemerald) and [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion) ROM hacks.
 
 TORCH replaces the scattered workflow of manual file editing, terminal commands, and cross-referencing documentation with a single unified tool. Write scripts in simplified TorScript, manage trainers and encounters through guided editors, and build your ROM — all without touching a line of C.
 
@@ -66,7 +66,7 @@ Remove vanilla content you don't need. Two modes:
 ## Requirements
 
 - Python 3.11+ (stdlib only — no pip dependencies)
-- A [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion) project (v1.6.0+)
+- A [pokeemerald](https://github.com/pret/pokeemerald) or [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion) (v1.6.0+) project
 - [Poryscript](https://github.com/huderlem/poryscript) compiler
 - devkitPro toolchain (for building the ROM)
 
