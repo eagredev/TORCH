@@ -1,0 +1,26 @@
+{
+  "wild_encounter_groups": [
+    {
+      "label": "gWildMonHeaders",
+      "for_maps": true,
+      "fields": [
+        {
+          "type": "land_mons",
+          "encounter_rates": [20, 16, 12, 10, 10, 10, 5, 5, 4, 4, 2, 2],
+          "groups": {
+            "PETALBURG_CITY": {
+              "MAP_PETALBURG_CITY": [
+                {"min_level": 3, "max_level": 4, "species": "SPECIES_POOCHYENA"}
+              ]
+            },
+            "LAKEELIXSOUTH": {
+              "MAP_LAKEELIXSOUTH": [
+                {"min_level": 5, "max_level": 7, "species": "SPECIES_ZIGZAGOON"}
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

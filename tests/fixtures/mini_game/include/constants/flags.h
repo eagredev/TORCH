@@ -1,0 +1,8 @@
+#ifndef GUARD_CONSTANTS_FLAGS_H
+#define GUARD_CONSTANTS_FLAGS_H
+
+#define FLAG_TEST_ALPHA   0x100
+#define FLAG_TEST_BETA    0x101
+#define FLAG_CUSTOM_EVENT 0x200
+
+#endif

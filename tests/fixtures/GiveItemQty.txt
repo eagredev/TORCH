@@ -1,0 +1,7 @@
+# Test fixture for give beat with quantity
+label GiveItemQty_Officer
+
+lock
+msg "Have some candy!"
+give ITEM_RARE_CANDY 3
+release

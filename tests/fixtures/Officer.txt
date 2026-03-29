@@ -1,0 +1,16 @@
+# Police Officer -- blocks path to the lakefront
+
+label LakeElixSouth_Officer
+pory lock
+faceplayer
+gotoif FLAG_MET_OFFICER LakeElixSouth_Officer_After
+msg "Hold it right there!\p... Wait. You're the CHAMPION,\naren't you?\pI almost didn't recognize you.\nYou look... rough. Are you okay?$"
+msg "Listen, the lakefront is locked\ndown right now.\pWe've had reports of TEAM ROCKET\nactivity in the area.\pI can't let anyone through, not\neven you. Not like this.\pHead south to SHIRUBE TOWN.\nThe POKeMON LEAGUE can help\lcoordinate from there.$"
+flag set FLAG_MET_OFFICER
+pory release
+pory end
+
+label LakeElixSouth_Officer_After
+msg "I'm sorry, CHAMPION.\nI can't let you through yet.\pSHIRUBE TOWN is to the south.\nPlease, get help from the LEAGUE.$"
+pory release
+pory end

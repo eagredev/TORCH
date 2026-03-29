@@ -1,0 +1,13 @@
+# Clyde -- idle script (talk to him before/after battle)
+
+label LakeElixSouth_Clyde
+pory lock
+faceplayer
+gotoif FLAG_BEAT_ROCKET_DUO_1 LakeElixSouth_Clyde_Gone
+msg "CLYDE: What are you looking at?$"
+pory release
+pory end
+
+label LakeElixSouth_Clyde_Gone
+pory release
+pory end

@@ -1,0 +1,61 @@
+# Clyde Arrives -- cutscene and double battle
+
+alias buster npc5
+alias clyde npc6
+
+# test
+
+label LakeElixSouth_ClydeArrives
+# Buster hears a voice
+buster emote ?
+# Buster and player both look south
+buster face down + player face down
+# Clyde runs in from off-screen (7 tiles north)
+clyde walkfast up 7
+msg "???: BUSTER! I'm here!\nI'm here! Sorry I'm late!$"
+# Banter 1: Clyde notices Koffing
+msg "???: I got held up at the--$"
+# Clyde looks at player, then back at Buster
+clyde face player
+pause
+pause
+clyde face up
+clyde emote ?
+msg "???: ... Why is your KOFFING on\nthe ground?$"
+# Banter 2: Buster explains
+clyde face player
+clyde emote !
+msg "BUSTER: They had TWO POKeMON!\nTWO! Against my one!\pIt was totally unfair, CLYDE.$"
+# Banter 3: The difference
+msg "CLYDE: ...So you lost a\ntwo-on-one.$"
+buster emote !
+msg "BUSTER: I lost a ONE-on-two!\nThere's a difference!$"
+buster emote !
+msg "CLYDE: There really isn't.$"
+# Revival Herb
+clyde walk up 1
+msg "CLYDE: Here. Give KOFFING this\nREVIVAL HERB. It'll fix him up.$"
+clyde walk down 1
+msg "BUSTER: Are those the cheap ones\nthat taste horrible?$"
+msg "THIS IS THE TEST DIALOGUE$"
+clyde emote ?
+msg "CLYDE: They work, don't they?\nJust shove it in his mouth.$"
+# Herb reaction and duo battle
+msg "BUSTER forced the REVIVAL HERB\ninto KOFFING's mouth.\pKOFFING woke up!\pKOFFING does not look happy\nabout this.$"
+msg "CLYDE: Right then. Two on two.\nFair and square this time.\pBUSTER: Yeah! Now you'll see\nwhat TEAM ROCKET can really do!$"
+trainerbattle_double TRAINER_ROCKET_DUO_1, LakeElixSouth_Clyde_BattleIntro, LakeElixSouth_Duo_Defeat, LakeElixSouth_NotEnoughMons, LakeElixSouth_AfterDuoBattle
+pory release
+pory end
+
+label LakeElixSouth_AfterDuoBattle
+msg "BUSTER: I can't believe it...\nBeaten twice in one day...\pCLYDE: Buster. That fighting\nstyle. Those POKeMON...\pCLYDE: Do you know who that is?$"
+msg "BUSTER: ... No?\pCLYDE: That's the CHAMPION,\nyou absolute moron.\pBUSTER: The... the CHAMPION?!\nTHE CHAMPION?!\pBUSTER: Why didn't you say\nsomething BEFORE the battle?!$"
+msg "CLYDE: I got here AFTER the\nbattle, genius.\pCLYDE: ...We should leave.\nNow.\pBUSTER: Y-yeah. Good idea.\nVery good idea. BYE!$"
+sound SE_EXIT
+fade black
+flag set FLAG_BEAT_ROCKET_DUO_1
+hide buster
+hide clyde
+fade in
+pory release
+pory end

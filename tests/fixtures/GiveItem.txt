@@ -1,0 +1,7 @@
+# Test fixture for give beat
+label GiveItem_Officer
+
+lock
+msg "Here, take this potion!"
+give ITEM_POTION
+release

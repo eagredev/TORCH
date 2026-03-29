@@ -1,0 +1,5 @@
+    .include "data/maps/PetalburgCity/scripts.inc"
+    .include "data/maps/PetalburgCity_Gym/scripts.inc"
+    .include "data/maps/Route124_DivingTreasureHuntersHouse/scripts.inc"
+    .include "data/maps/LakeElixSouth/scripts.inc"
+    .include "data/maps/LakeElixSouth_House1/scripts.inc"

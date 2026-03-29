@@ -1,0 +1,27 @@
+=== TRAINER_GRUNT ===
+Name: Grunt
+Class: TRAINER_CLASS_TEAM_AQUA
+Encounter Music: TRAINER_ENCOUNTER_MUSIC_AQUA
+Pic: TRAINER_PIC_AQUA_GRUNT_M
+Gender: TRAINER_MON_MALE
+Double Battle: FALSE
+AI: AI_FLAG_CHECK_BAD_MOVE
+Party Size: 1
+
+Pokemon:
+    Species: SPECIES_POOCHYENA
+    Level: 9
+
+=== TRAINER_CUSTOM_RANGER ===
+Name: Ranger
+Class: TRAINER_CLASS_RANGER
+Encounter Music: TRAINER_ENCOUNTER_MUSIC_MALE
+Pic: TRAINER_PIC_RANGER_M
+Gender: TRAINER_MON_MALE
+Double Battle: FALSE
+AI: AI_FLAG_CHECK_BAD_MOVE
+Party Size: 1
+
+Pokemon:
+    Species: SPECIES_ZIGZAGOON
+    Level: 12

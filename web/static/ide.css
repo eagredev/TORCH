@@ -1,0 +1,989 @@
+/* Override page when IDE is active — fill viewport exactly, no scroll */
+html:has(.ide-root),
+body:has(.ide-root) {
+  overflow: hidden;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+main:has(.ide-root) {
+  padding: 0;
+  margin: 0;
+  max-width: none;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* TORCH IDE — Unified Map-Centric Layout
+ *
+ * Three-panel grid: left (map tree), center (canvas), right (properties).
+ * Toolbar at top, status bar at bottom, optional script drawer.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Root layout
+ * ------------------------------------------------------------------------- */
+
+.ide-root {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 1fr;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--surface-0, #0a0a0a);
+  color: var(--text-primary, #fff);
+}
+
+/* ---------------------------------------------------------------------------
+ * Toolbar
+ * ------------------------------------------------------------------------- */
+
+.ide-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface-1, #111);
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  height: 36px;
+  padding: 0 0.5rem;
+  z-index: 100;
+  user-select: none;
+}
+
+.ide-toolbar-menus {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+}
+
+.ide-menu-trigger {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #ccc);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.12s;
+}
+.ide-menu-trigger:hover,
+.ide-menu-trigger.open {
+  background: var(--surface-2, #1a1a1a);
+  color: var(--text-primary, #fff);
+}
+
+/* Dropdown */
+.ide-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 180px;
+  background: var(--surface-2, #1a1a1a);
+  border: 1px solid var(--border-emphasis, #333);
+  border-radius: 4px;
+  padding: 0.25rem 0;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 200;
+}
+.ide-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #ccc);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.ide-dropdown-item:hover {
+  background: var(--accent, #d4a017);
+  color: #111;
+}
+.ide-dropdown-item .shortcut {
+  color: var(--text-dim, #666);
+  font-size: 0.7rem;
+  margin-left: 1.5rem;
+}
+.ide-dropdown-item:hover .shortcut {
+  color: #333;
+}
+.ide-dropdown-sep {
+  height: 1px;
+  background: var(--border-subtle, #2a2a2a);
+  margin: 0.25rem 0;
+}
+
+/* Toolbar right section */
+.ide-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ide-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface-2, #1a1a1a);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ide-mode-btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ide-mode-btn.active {
+  background: var(--accent, #d4a017);
+  color: #111;
+  font-weight: 600;
+}
+
+.ide-build-btn {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #111;
+  background: var(--accent, #d4a017);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.ide-build-btn:hover { opacity: 0.85; }
+.ide-build-btn.building {
+  background: var(--status-building, #d44020);
+  color: #fff;
+  animation: ide-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ide-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.ide-theme-btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  background: none;
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ide-theme-btn:hover { color: var(--text-primary, #fff); }
+
+/* ---------------------------------------------------------------------------
+ * Main content area (three panels)
+ * ------------------------------------------------------------------------- */
+
+.ide-main {
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+  flex: 1;
+}
+.ide-main.drawer-open {
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * Left panel — Map Tree
+ * ------------------------------------------------------------------------- */
+
+.ide-left {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1, #111);
+  border-right: none;
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 0 240px;
+  width: 240px;
+}
+
+.ide-left-header {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+}
+.ide-left-header h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+.ide-left-collapse {
+  background: none;
+  border: none;
+  color: var(--text-dim, #888);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ide-left-collapse:hover { color: var(--accent, #d4a); }
+
+/* Collapsed left panel */
+.ide-left.collapsed {
+  width: 24px !important;
+  flex: 0 0 24px !important;
+  min-width: 0;
+  overflow: hidden;
+}
+.ide-left.collapsed .ide-map-tree,
+.ide-left.collapsed .ide-map-search { display: none; }
+.ide-left.collapsed .ide-left-header {
+  border: none;
+  padding: 0.4rem 0.2rem;
+}
+.ide-left.collapsed .ide-left-header h3 { display: none; }
+
+.ide-map-search {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  background: var(--surface-2, #1a1a1a);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 4px;
+  color: var(--text-primary, #fff);
+  outline: none;
+  box-sizing: border-box;
+}
+.ide-map-search:focus { border-color: var(--accent, #d4a017); }
+.ide-map-search::placeholder { color: var(--text-dim, #666); }
+
+.ide-map-tree {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.25rem 0;
+}
+
+/* Tree nodes */
+.ide-tree-group {
+  margin-bottom: 0.15rem;
+}
+.ide-tree-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s;
+}
+.ide-tree-group-header:hover { color: var(--text-primary, #fff); }
+.ide-tree-group-header .arrow {
+  font-size: 0.6rem;
+  transition: transform 0.15s;
+  width: 0.8rem;
+  text-align: center;
+}
+.ide-tree-group-header.collapsed .arrow { transform: rotate(-90deg); }
+.ide-tree-group-header .count {
+  margin-left: auto;
+  color: var(--text-dim, #666);
+  font-size: 0.65rem;
+}
+.ide-tree-group-items {
+  overflow: hidden;
+}
+.ide-tree-group-header.collapsed + .ide-tree-group-items {
+  display: none;
+}
+
+.ide-tree-map {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem 0.2rem 1.4rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #ccc);
+  cursor: pointer;
+  transition: background 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ide-tree-map:hover { background: var(--surface-2, #1a1a1a); }
+.ide-tree-map.selected {
+  background: rgba(212, 160, 23, 0.12);
+  color: var(--accent, #d4a017);
+  font-weight: 600;
+}
+.ide-tree-map .health {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ide-tree-map .health.ok { background: var(--status-ok, #4ade80); }
+.ide-tree-map .health.stale { background: var(--status-warn, #facc15); }
+.ide-tree-map .health.drift { background: var(--status-error, #ef4444); }
+.ide-tree-map .health.new { background: #60a5fa; }
+.ide-tree-map .health.orphan { background: #f97316; }
+.ide-tree-map .npc-count {
+  margin-left: auto;
+  font-size: 0.65rem;
+  color: var(--text-dim, #666);
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Resize handles between panels
+ * ------------------------------------------------------------------------- */
+
+.ide-resize-handle {
+  flex: 0 0 4px;
+  width: 4px;
+  background: var(--border-subtle, #2a2a2a);
+  cursor: col-resize;
+  transition: background 0.15s;
+  z-index: 5;
+}
+.ide-resize-handle:hover {
+  background: var(--accent, #d4a017);
+}
+
+/* ---------------------------------------------------------------------------
+ * Center panel — Map Canvas
+ * ------------------------------------------------------------------------- */
+
+.ide-center {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  position: relative;
+  background: var(--surface-0, #0a0a0a);
+}
+
+.ide-canvas-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+}
+.ide-canvas-wrap.panning { cursor: grabbing; }
+
+.ide-canvas-wrap canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Empty state */
+.ide-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim, #666);
+  font-size: 0.9rem;
+  gap: 0.5rem;
+}
+.ide-empty-state .logo {
+  font-size: 2rem;
+  color: var(--accent, #d4a017);
+  opacity: 0.3;
+}
+
+/* Grid overlay */
+.ide-canvas-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* Coordinate tooltip */
+.ide-coord-tip {
+  position: absolute;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.7rem;
+  background: rgba(0,0,0,0.8);
+  color: var(--text-secondary, #ccc);
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Right panel — Context Properties
+ * ------------------------------------------------------------------------- */
+
+.ide-right {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1, #111);
+  border-left: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  flex: 0 0 280px;
+  width: 280px;
+}
+
+.ide-right-header {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.ide-right-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-primary, #fff);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ide-right-collapse {
+  background: none;
+  border: none;
+  color: var(--text-dim, #888);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ide-right-collapse:hover { color: var(--accent, #d4a); }
+
+/* Collapsed right panel */
+.ide-right.collapsed {
+  width: 24px !important;
+  flex: 0 0 24px !important;
+  min-width: 0;
+  overflow: hidden;
+}
+.ide-right.collapsed .ide-right-body { display: none; }
+.ide-right.collapsed .ide-right-header {
+  border: none;
+  padding: 0.4rem 0.2rem;
+  flex-direction: column;
+}
+.ide-right.collapsed .ide-right-header h3 { display: none; }
+
+.ide-right-body {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  overflow-y: auto;
+}
+
+/* Property sections */
+.ide-prop-section {
+  margin-bottom: 0.75rem;
+}
+.ide-prop-section h4 {
+  margin: 0 0 0.35rem 0;
+  font-size: 0.7rem;
+  color: var(--accent, #d4a017);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ide-prop-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  font-size: 0.78rem;
+}
+.ide-prop-label {
+  color: var(--text-muted, #888);
+  min-width: 70px;
+  flex-shrink: 0;
+}
+.ide-prop-value {
+  color: var(--text-secondary, #ccc);
+  word-break: break-word;
+}
+.ide-prop-value a {
+  color: var(--accent, #d4a017);
+  text-decoration: none;
+  cursor: pointer;
+}
+.ide-prop-value a:hover { text-decoration: underline; }
+
+/* Event count badges */
+.ide-event-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+.ide-event-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.7rem;
+  border-radius: 3px;
+  background: var(--surface-2, #1a1a1a);
+  color: var(--text-secondary, #ccc);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+}
+.ide-event-badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.ide-event-badge .dot.npc { background: #60a5fa; }
+.ide-event-badge .dot.warp { background: #a78bfa; }
+.ide-event-badge .dot.trigger { background: #fb923c; }
+.ide-event-badge .dot.sign { background: #4ade80; }
+
+/* Tabs in right panel */
+.ide-right-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  margin: 0.5rem -0.6rem 0.5rem -0.6rem;
+  padding: 0 0.6rem;
+}
+.ide-right-tab {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--text-muted, #888);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ide-right-tab:hover { color: var(--text-primary, #fff); }
+.ide-right-tab.active {
+  color: var(--accent, #d4a017);
+  border-bottom-color: var(--accent, #d4a017);
+}
+
+/* ---------------------------------------------------------------------------
+ * Status bar
+ * ------------------------------------------------------------------------- */
+
+.ide-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--surface-1, #111);
+  border-top: 1px solid var(--border-subtle, #2a2a2a);
+  font-size: 0.7rem;
+  color: var(--text-muted, #888);
+  height: 24px;
+  user-select: none;
+}
+.ide-status-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+.ide-status-item .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.ide-status .build-ready .dot { background: var(--status-ok, #4ade80); }
+.ide-status .build-building .dot { background: var(--status-building, #d44020); animation: ide-pulse 1.2s ease-in-out infinite; }
+.ide-status .map-name { color: var(--text-secondary, #ccc); font-weight: 600; }
+.ide-status .coords { color: var(--text-secondary, #ccc); font-family: monospace; }
+
+/* ---------------------------------------------------------------------------
+ * Script drawer
+ * ------------------------------------------------------------------------- */
+
+.ide-drawer {
+  display: none;
+  flex: 0 0 auto;
+  width: 100%;
+  border-top: 2px solid var(--accent, #d4a017);
+  background: var(--surface-1, #111);
+  height: 50vh;
+  min-height: 200px;
+  overflow: hidden;
+}
+.ide-main.drawer-open .ide-drawer {
+  display: flex;
+  flex-direction: column;
+}
+.ide-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--surface-2, #1a1a1a);
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  font-size: 0.8rem;
+}
+.ide-drawer-title {
+  color: var(--text-primary, #fff);
+  font-weight: 600;
+}
+.ide-drawer-close {
+  margin-left: auto;
+  color: var(--text-dim, #666);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.3rem;
+}
+.ide-drawer-close:hover { color: var(--text-primary, #fff); }
+.ide-drawer-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tool modals — floating dialogs for existing views
+ * ------------------------------------------------------------------------- */
+
+.ide-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ide-modal {
+  background: var(--surface-1, #111);
+  border: 1px solid var(--border-emphasis, #333);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  width: min(90vw, 1200px);
+  height: min(85vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.ide-modal-titlebar {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2, #1a1a1a);
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.ide-modal-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+}
+
+.ide-modal-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted, #888);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  line-height: 1;
+}
+.ide-modal-close:hover {
+  color: var(--text-primary, #fff);
+}
+
+.ide-modal-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1rem;
+  /* Override max-width constraints that views may inherit from main */
+  max-width: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Context menu (right-click on map)
+ * ------------------------------------------------------------------------- */
+
+.ide-context-menu {
+  position: fixed;
+  min-width: 160px;
+  background: var(--surface-2, #1a1a1a);
+  border: 1px solid var(--border-emphasis, #333);
+  border-radius: 4px;
+  padding: 0.25rem 0;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 600;
+  font-size: 0.8rem;
+}
+
+.ide-context-item {
+  padding: 0.35rem 0.75rem;
+  color: var(--text-secondary, #ccc);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.ide-context-item:hover:not(.disabled) {
+  background: var(--accent, #d4a017);
+  color: #111;
+}
+.ide-context-item.disabled {
+  color: var(--text-dim, #666);
+  cursor: default;
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-top: 0.4rem;
+}
+.ide-context-item.danger { color: var(--status-error, #ef4444); }
+.ide-context-item.danger:hover { background: var(--status-error, #ef4444); color: #fff; }
+.ide-context-sep {
+  height: 1px;
+  background: var(--border-subtle, #2a2a2a);
+  margin: 0.2rem 0;
+}
+
+/* Some views use article > header patterns — ensure they fit in modal */
+.ide-modal-content article {
+  max-width: none;
+  margin: 0;
+}
+.ide-modal-content .studio-nav {
+  display: none;  /* Hide studio sub-nav inside modals */
+}
+
+/* ---------------------------------------------------------------------------
+ * Responsive
+ * ------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .ide-right, .ide-resize-handle:last-of-type { display: none; }
+}
+@media (max-width: 600px) {
+  .ide-left, .ide-right, .ide-resize-handle { display: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Scripts Mode — overlay, transport bar, dialogue
+ * ------------------------------------------------------------------------- */
+
+/* Overlay canvas sits on top of map canvas */
+.ide-script-overlay-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.ide-script-overlay-html {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  overflow: hidden;
+}
+
+/* GBA-authentic dialogue box on the map — fixed at bottom center, 2 lines max */
+.ide-script-dlg-box {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translate(-50%, 0);
+  width: 300px;
+  padding: 8px 12px;
+  background: #1a1f2e;
+  border: 2px solid #4a5570;
+  border-radius: 6px;
+  color: #e0e4f0;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  white-space: pre-wrap;
+  z-index: 10;
+  max-height: 3.2em; /* ~2 lines at 1.5 line-height */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #4a5570 transparent;
+}
+
+/* Left panel tab bar */
+.ide-left-tabs {
+  display: flex;
+  gap: 0;
+  flex: 1;
+}
+.ide-left-tab {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #666);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ide-left-tab.active {
+  color: var(--accent, #d4a017);
+  border-bottom-color: var(--accent, #d4a017);
+}
+.ide-left-tab:hover:not(.active) {
+  color: var(--text-secondary, #ccc);
+}
+
+/* Beat panel in left panel */
+.ide-beat-panel-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.ide-beat-panel .beat-list-container {
+  font-size: 0.75rem;
+}
+.ide-beat-panel .beat-row {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+}
+.ide-beat-panel .beat-search-bar {
+  padding: 0.2rem 0.3rem;
+}
+
+/* Beat editor in right panel */
+.ide-beat-editor-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.2rem 0;
+}
+.ide-beat-editor-body .viz-ed-field {
+  margin-bottom: 0.4rem;
+}
+.ide-beat-editor-body .viz-ed-label {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-dim, #888);
+  margin-bottom: 0.15rem;
+}
+.ide-beat-editor-body .viz-ed-select,
+.ide-beat-editor-body .viz-ed-input {
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  background: var(--surface-1, #1a1a1a);
+  color: var(--text-primary, #fff);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.ide-beat-editor-body textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: "Courier New", monospace;
+  background: var(--surface-1, #1a1a1a);
+  color: var(--text-primary, #fff);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 4px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+/* Transport bar in IDE layout (replaces status bar when in scripts mode) */
+.ide-status.ide-script-transport {
+  height: 36px;
+  padding: 0 0.5rem;
+  gap: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #ccc);
+  overflow: hidden;
+}
+
+/* Adapt transport controls to IDE bar height */
+.ide-script-transport .viz-transport {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.4rem;
+  height: 100%;
+}
+.ide-script-transport .viz-transport-left {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1;
+}
+.ide-script-transport .viz-transport-right {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.ide-script-transport button {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  background: var(--surface-2, #1a1a1a);
+  color: var(--text-secondary, #ccc);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.ide-script-transport button:hover {
+  background: var(--border-subtle, #2a2a2a);
+}
+.ide-script-transport .viz-play-btn {
+  background: var(--accent, #d4a017);
+  color: #111;
+  font-weight: 600;
+  border-color: transparent;
+}
+.ide-script-transport .viz-save-btn,
+.ide-script-transport .viz-save-build-btn {
+  background: var(--accent, #d4a017);
+  color: #111;
+  font-weight: 600;
+  border-color: transparent;
+}
+.ide-script-transport .viz-beat-info {
+  font-family: monospace;
+  color: var(--text-dim, #666);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.ide-script-transport .viz-distance-wrap,
+.ide-script-transport .viz-dir-wrap,
+.ide-script-transport .viz-chain-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.ide-script-transport .viz-distance-slider {
+  width: 80px;
+  height: 16px;
+}
+.ide-script-transport .viz-save-status {
+  font-size: 0.7rem;
+  white-space: nowrap;
+}

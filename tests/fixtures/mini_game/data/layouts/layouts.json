@@ -1,0 +1,10 @@
+{
+  "layouts_table_label": "gMapLayouts",
+  "layouts": [
+    {"id": "LAYOUT_PETALBURG_CITY", "name": "PetalburgCity", "width": 30, "height": 20},
+    {"id": "LAYOUT_PETALBURG_CITY_GYM", "name": "PetalburgCity_Gym", "width": 10, "height": 10},
+    {"id": "LAYOUT_ROUTE124_DIVING_TREASURE_HUNTERS_HOUSE", "name": "Route124_DivingTreasureHuntersHouse", "width": 8, "height": 8},
+    {"id": "LAYOUT_LAKEELIXSOUTH", "name": "LakeElixSouth", "width": 25, "height": 25},
+    {"id": "LAYOUT_LAKEELIXSOUTH_HOUSE1", "name": "LakeElixSouth_House1", "width": 8, "height": 8}
+  ]
+}

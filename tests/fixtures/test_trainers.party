@@ -1,0 +1,25 @@
+=== TRAINER_TEST_GRUNT ===
+Name: Grunt
+Class: TRAINER_CLASS_TEAM_ROCKET
+Pic: TRAINER_PIC_AQUA_GRUNT_M
+Gender: Male
+Music: TRAINER_ENCOUNTER_MUSIC_MALE
+Double: No
+
+Koffing
+Level: 20
+- Tackle
+- Smokescreen
+
+=== TRAINER_TEST_ACE ===
+Name: Ace
+Class: TRAINER_CLASS_ACE_TRAINER_M
+Pic: TRAINER_PIC_ACE_TRAINER_M
+Gender: Male
+Music: TRAINER_ENCOUNTER_MUSIC_COOL
+Double: No
+
+Pikachu
+Level: 30
+- Thunderbolt
+- Quick Attack

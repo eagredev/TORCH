@@ -1,0 +1,18 @@
+{
+  "group_order": [
+    "gMapGroup_Petalburg",
+    "gMapGroup_IndoorRoute124",
+    "gMapGroup_Custom"
+  ],
+  "gMapGroup_Petalburg": [
+    "MAP_PETALBURG_CITY",
+    "MAP_PETALBURG_CITY_GYM"
+  ],
+  "gMapGroup_IndoorRoute124": [
+    "MAP_ROUTE124_DIVING_TREASURE_HUNTERS_HOUSE"
+  ],
+  "gMapGroup_Custom": [
+    "MAP_LAKEELIXSOUTH",
+    "MAP_LAKEELIXSOUTH_HOUSE1"
+  ]
+}

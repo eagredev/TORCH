@@ -1,0 +1,7 @@
+#ifndef GUARD_CONSTANTS_VARS_H
+#define GUARD_CONSTANTS_VARS_H
+
+#define VAR_TEST_COUNTER  0x4000
+#define VAR_CUSTOM_STATE  0x4001
+
+#endif

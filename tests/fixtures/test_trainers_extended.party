@@ -1,0 +1,35 @@
+=== TRAINER_TEST_PARTNER ===
+Name: STEVEN
+Class: Rival
+Pic: Steven
+Gender: Male
+Music: Male
+Back Pic: Steven
+Double Battle: No
+AI: Basic Trainer
+Starting Status: STATUS1_TOXIC_POISON
+
+Metang
+Level: 42
+Ability: Clear Body
+Tera Type: Steel
+Dynamax Level: 8
+Gigantamax: No
+- Psychic
+- Metal Claw
+
+=== TRAINER_TEST_FUTURE ===
+Name: FUTURE
+Class: Ace Trainer
+Pic: Ace Trainer M
+Gender: Male
+Music: Cool
+Double Battle: No
+Zodiac Sign: Aquarius
+Lucky Number: 7
+
+Pikachu
+Level: 50
+Aura Color: Yellow
+Power Level: 9001
+- Thunderbolt

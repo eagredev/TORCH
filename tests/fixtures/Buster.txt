@@ -1,0 +1,15 @@
+# Buster -- first encounter (solo battle)
+
+alias buster npc5
+
+label LakeElixSouth_Buster
+trainerbattle_double TRAINER_ROCKET_BUSTER_1, LakeElixSouth_Buster_FullIntro, LakeElixSouth_Buster_Defeat1, LakeElixSouth_NotEnoughMons, LakeElixSouth_AfterBuster1
+msgnpc "Hey, hey, hey!\nWhere do you think you're going?\pThis forest belongs to TEAM ROCKET\nright now, got it?\pThe name's BUSTER.\nAnd I'm about to bust you up!\pGo, KOFFING!$"
+pory end
+
+label LakeElixSouth_AfterBuster1
+flag set FLAG_BEAT_BUSTER_1
+msg "BUSTER: Ugh... No fair...\nTwo against one...$"
+buster emote !
+msg "BUSTER: Just wait until my\npartner gets here!\pThen you'll see!$"
+goto LakeElixSouth_ClydeArrives
