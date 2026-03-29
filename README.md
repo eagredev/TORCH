@@ -8,17 +8,44 @@ TORCH replaces the scattered workflow of manual file editing, terminal commands,
 
 ## Features
 
-### TorScript Compiler
-Write game scripts in a simplified, human-readable format — TORCH compiles them to Poryscript automatically.
+### TorScript
+
+TorScript is TORCH's own scripting language — a simplified, human-readable alternative to writing Poryscript or raw assembly by hand. TORCH compiles it down to Poryscript automatically.
+
+Instead of wrangling `applymovement`, `waitmovement`, `msgbox`, and constant lookups, you write what you mean:
 
 ```
 @ Buster
+alias buster npc5
+
+label BusterScene
+    lock
+    buster face player
     "Hey, have you seen my Poochyena?"
     "I lost him near the lake..."
     emote buster !
     pause 30
+    buster walk down 3
     "Oh wait, there he is!"
+    flag set FLAG_MET_BUSTER
+    end
 ```
+
+**What TorScript handles for you:**
+- **Dialogue** — just write text in quotes. Line breaks, text boxes, and string labels are managed automatically
+- **Movement** — `buster walk up 3` instead of defining movement data arrays and calling `applymovement`/`waitmovement`
+- **Parallel movement** — `buster face down + player face down` moves multiple actors simultaneously
+- **Walk-to** — `clyde walkto player 0 1` dynamically walks an NPC to a target at runtime
+- **Camera** — `camera pan down 3` and `camera reset` with automatic offset tracking
+- **Emotes** — `emote buster !` instead of looking up `EMOTE_EXCLAMATION_MARK` constants
+- **Give items** — `give ITEM_POTION 3` with automatic bag-full safety check
+- **Flags & vars** — `flag set FLAG_NAME`, `gotoif FLAG_NAME Label`
+- **Sound** — `sound SE_EXIT`, `music MUS_ROUTE101`, `cry SPECIES_KOFFING`, `fanfare MUS_OBTAIN_ITEM`
+- **Screen effects** — `fade black`, `fade in`, `shake 1 8`
+- **NPC management** — `hide buster`, `show buster`, `setpos clyde 28 62`
+- **Pass-through** — `pory somecommand(args)` for anything TorScript doesn't cover yet
+
+The compiler validates flag names, species, items, moves, music, and sound effects against your game's actual header files before building — so you catch typos at compile time, not after a 5-minute ROM build.
 
 ### Sync Engine
 Manages the pipeline from your workspace to the game project. Tracks map health (`ok`, `stale`, `drift`, `orphan`, `new`), snapshots before every sync, and auto-detects when files change outside TORCH.
