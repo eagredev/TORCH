@@ -1,39 +1,53 @@
 ========================================
- TORCH v0.1.0-alpha — QUICK REFERENCE
+ TORCH v0.3.6 — TORSCRIPT REFERENCE
 ========================================
 
 COMMANDS
 --------
   torch                        Main menu
-  torch menu                   Main menu (alias)
+  torch gui                    Launch web GUI
   torch init                   First-time setup
   torch sync MapName           Sync one map to game folder
   torch sync                   Sync all enrolled maps
   torch build                  Build ROM (auto-syncs stale maps)
   torch restore                Verified build snapshot restore
   torch restore MapName        Interactive workspace restore
-  torch scene                  Script Studio hub
-  torch scene Map Scene        Open a specific scene directly
-  torch battle                 Trainers module
-  torch battle migrate         Migrate legacy .h to .party format
-  torch scorch                 SCORCH full-scan wizard
-  torch scorch <category>      Category mode (see SCORCH section)
-  torch scorch report          Scan-only report (saved to file)
-  torch scorch restore         Restore from SCORCH snapshot
-  torch clean                  Alias for torch scorch
-  torch cleanup                Alias for torch scorch
   torch status                 Map health indicators
   torch enroll [MapName|--all] Enroll maps in registry
   torch unenroll MapName       Remove map from registry
-  torch studio                 ROM Studio (title, game code)
-  torch config                 Config Manager
-  torch backup [tag]           Back up TORCH package
-  torch backup list            Show backups with tier labels
+  torch script MapName         Script Studio (TUI)
+  torch trainers               Trainer editor
+  torch wild / encounters      Encounter editor
+  torch npc MapName            NPC editor
+  torch dex                    Pokemon browser
+  torch items                  Item editor
+  torch moves                  Move editor
+  torch learnsets              Learnset editor
+  torch flags [MapName]        Flag browser
+  torch shops [MapName]        Shop editor
+  torch heal                   Heal location manager
+  torch music                  Music browser
+  torch explore [MapName]      Map Explorer
+  torch tileset                Tileset assistant
+  torch template [type] [args] Building templates
+  torch rom                    ROM metadata editor
+  torch settings               Game settings menu
+  torch scorch                 SCORCH wizard
+  torch scorch phoenix         Full vanilla wipe
+  torch scorch report          Scan-only report
+  torch scorch restore         Restore from SCORCH snapshot
+  torch config                 Configuration manager
+  torch backup [tag]           Create backup
+  torch backup list            List backups
   torch backup prune           Enforce retention policy
-  torch sandbox                Dev Sandbox (dev build only)
-  torch update                 Self-update from release zip
-  torch --project "Name" cmd   Select project (multi-project)
-  torch <name>                 Standalone compile (test only)
+  torch fork                   Clone project for experimentation
+  torch new                    Create new project from GitHub
+  torch upgrade [--check|--to] Upgrade expansion version
+  torch versions [subcommand]  Game version control
+  torch decompile file [Map]   Decompile .pory to TorScript
+  torch decompile-inc file     Decompile .inc to Poryscript
+  torch --project "Name" cmd   Select project for this command
+  torch <name>                 Standalone compile (.txt -> .pory)
 
 ========================================
  WORKSPACE
@@ -57,6 +71,36 @@ COMMANDS
     \l   Scroll line
     $    End of string
 
+========================================
+ SCRIPT STRUCTURE
+========================================
+
+TOP-LEVEL DIRECTIVES
+--------------------
+alias name npcN              Define actor alias (auto-creates LOCALID)
+pokemon species npcN         Declare Pokemon actor (enables faint/revive)
+mapscripts LabelName         Mapscripts block
+text Label "content$"        Named text block (reusable)
+movement Label               Start named movement block
+endmovement                  End named movement block
+movement Label { cmd, cmd }  Inline movement block
+label ScriptName             Start a script block
+script ScriptName            Same as label
+
+SCRIPT FLOW
+-----------
+lock                         Lock all movement (unfreezes Pokemon actors)
+end                          Release all + end script
+release                      Release single NPC + end script
+goto Label                   Unconditional jump
+call Label                   Call subroutine
+return                       Return from subroutine
+closemessage                 Close dialogue box
+faceplayer                   NPC faces player
+special FuncName             Call special C function
+waitstate                    Wait for special to complete
+gotoif FLAG_NAME Label       Jump if flag is set
+
 ----------------------------------------
  ACTORS
 ----------------------------------------
@@ -64,25 +108,31 @@ player                     The player character
 npc5                       Object event local ID 5
 alias buster npc5          "buster" = LOCALID_BUSTER (5)
                            Auto-generates const declaration.
+pokemon pikachu npc2       Pokemon actor with idle animation.
+                           Auto-generates const + tracks freeze state.
 
 ----------------------------------------
- MESSAGES
+ DIALOGUE
 ----------------------------------------
 Inline (auto-creates text label):
-  msg "BUSTER: Hello there!$"
+  "Hello there!"
+  "This is a second text box."
+
+NPC-style (different message box):
+  msgnpc "Hey!$"
 
 Multi-line (continuation lines in quotes):
-  msg "BUSTER: This is a long\n"
-      "piece of dialogue.\p"
-      "And it continues.$"
-
-NPC-style (no button wait):
-  msgnpc "BUSTER: Hey!$"
+  "This is a long\n"
+  "piece of dialogue.\p"
+  "And it continues."
 
 Named text block (top-level, outside scripts):
   text MyTextLabel "The content here.$"
 
 Auto-adds $ at end if you forget it.
+
+Note: msg "text" also works but bare quoted strings
+inside a script block are the preferred syntax.
 
 ----------------------------------------
  MOVEMENT
@@ -109,6 +159,7 @@ Walk-to-target (dynamic destination, resolves at runtime):
 
   Walks L-shaped (X axis first, then Y axis).
   Offsets: positive X = right, positive Y = down.
+  Uses VAR_0x8004-0x8007 as scratch variables.
   Cannot use + parallel syntax (use separate lines).
 
 Parallel movement (same line, + separator):
@@ -131,26 +182,48 @@ Multi-line (top-level, outside scripts):
 Single-line:
   movement MyMoveLabel { face_down, walk_up, walk_up }
 
+Repeat syntax:
+  movement MyMoveLabel { walk_down * 3, face_up }
+
 Then reference with: buster do MyMoveLabel
 
-MOVEMENT BLOCK MANAGER (Script Studio):
-  Press [m] in the editor to manage blocks visually.
-  - Create, edit, rename, and delete blocks in setup.pory
-  - Categorized command picker (Face, Walk, Jump, etc.)
-  - Reference checker warns before deleting used blocks
-  - 'do' beat picker shows existing blocks
+AVAILABLE MOVEMENT COMMANDS:
+  Face:      face_down, face_up, face_left, face_right,
+             face_player, face_away_player
+  Walk:      walk_down, walk_up, walk_left, walk_right
+  Walk slow: walk_slow_down, walk_slow_up, walk_slow_left,
+             walk_slow_right
+  Walk fast: walk_fast_down, walk_fast_up, walk_fast_left,
+             walk_fast_right
+  Walk in place: walk_in_place_down, walk_in_place_up,
+             walk_in_place_left, walk_in_place_right,
+             walk_in_place_fast_down, walk_in_place_fast_up,
+             walk_in_place_fast_left, walk_in_place_fast_right
+  Jump:      jump_down, jump_up, jump_left, jump_right
+  Jump 2:    jump_2_down, jump_2_up, jump_2_left, jump_2_right
+  Jump in place: jump_in_place_down, jump_in_place_up,
+             jump_in_place_left, jump_in_place_right
+  Slide:     slide_down, slide_up, slide_left, slide_right
+  Delay:     delay_1, delay_2, delay_4, delay_8, delay_16
+  Visibility: set_visible, set_invisible
+  Locking:   lock_facing_direction, unlock_facing_direction,
+             disable_anim, enable_anim
+  Emotes:    emote_exclamation_mark, emote_question_mark,
+             emote_double_exclamation_mark, emote_x,
+             emote_heart, emote_dot_dot_dot
+  End:       step_end
 
 ----------------------------------------
  EMOTES
 ----------------------------------------
-buster emote !             Exclamation mark
-buster emote ?             Question mark
-buster emote !!            Double exclamation
-buster emote x             X mark
-buster emote heart         Heart
-buster emote ...           Dot dot dot
+emote buster !             Exclamation mark
+emote buster ?             Question mark
+emote buster !!            Double exclamation
+emote buster x             X mark
+emote buster heart         Heart
+emote buster ...           Dot dot dot
 
-Custom emotes: add to ~/ROMHacking/TORCH/config/emotes.conf
+Custom emotes: add to config/emotes.conf
 
 ----------------------------------------
  SCREEN EFFECTS
@@ -231,39 +304,93 @@ Notes:
   persists; camera reset still works after battles
 
 ----------------------------------------
- SCRIPT FLOW
-----------------------------------------
-label SceneName            Start a new script block
-script SceneName           Same as label (alternative)
-lock                       Lock all movement (lockall)
-end                        Release all + end
-release                    Release (single NPC) + end
-goto SceneName             Jump to label
-call SceneName             Call subroutine
-return                     Return from call
-closemessage               Close dialog box
-faceplayer                 NPC faces player
-special FuncName           Call special function
-waitstate                  Wait for special to finish
-
-Trainer battles:
-  trainerbattle_single TRAINER_ID, IntroText, DefeatText
-  trainerbattle_double TRAINER_ID, IntroText, DefeatText,
-      NotEnoughText, AfterLabel
-
-  Text labels must be named text blocks (battle wizard
-  creates these for you).
-
-----------------------------------------
  GIVE ITEM
 ----------------------------------------
 give ITEM_CONSTANT [quantity]
-    Give an item to the player with automatic bag-full safety check.
-    Compiles to: giveitem() + compare(VAR_RESULT, FALSE) + goto_if_eq(BagFull)
+    Give an item to the player with automatic bag-full
+    safety check. Compiles to giveitem() + bag-full branch.
     BagFull label auto-generated at end of script.
     Examples:
         give ITEM_POTION        -- give 1 potion
         give ITEM_RARE_CANDY 3  -- give 3 rare candies
+
+----------------------------------------
+ POKEMON ACTORS
+----------------------------------------
+pokemon pikachu npc2       Declare a Pokemon NPC actor
+
+faint pikachu              Stop idle animation (fainted state)
+revive pikachu             Restart idle animation
+
+Pokemon actors are declared at the top of a script file
+using the `pokemon` directive instead of `alias`. This
+tracks the actor's freeze state:
+- lock auto-unfreezes Pokemon actors
+- hide/remove waits for movement then freezes
+- show/add unfreezes so idle animation resumes
+- faint forces face-down + freeze
+- revive unfreezes via callnative
+
+Requires the ScriptUnfreezePokemonActor engine patch,
+which TORCH auto-applies on first use.
+
+----------------------------------------
+ FOLLOWER NPCs
+----------------------------------------
+follower add local LOCALID PARTNER [FLAGS]
+    Set an existing map NPC as follower
+
+follower add dynamic GFX PARTNER [FLAGS]
+    Create a new follower NPC dynamically
+
+follower remove            Destroy follower NPC
+follower face              Face follower toward player
+follower hide [speed]      Hide follower (optional speed)
+follower check             Check if follower exists
+follower change PARTNER    Change follower's battle partner
+
+FLAGS defaults to FNPC_ALL if omitted.
+Speed options: FOLLOWER_MOVE_SLOW, FOLLOWER_MOVE_FAST, etc.
+
+Requires pokeemerald-expansion follower NPC system.
+
+----------------------------------------
+ MULTI BATTLES
+----------------------------------------
+multi 2v2 TRAINER_A TextA TRAINER_B TextB PARTNER
+    2 vs 2 double battle
+
+multi 2v1 TRAINER_A TextA PARTNER
+    2 vs 1 double battle
+
+multi 2v2_fixed TRAINER_A TextA TRAINER_B TextB PARTNER
+    Fixed 2v2 (predetermined partner actions)
+
+multi 2v1_fixed TRAINER_A TextA PARTNER
+    Fixed 2v1
+
+Text args are named text block labels.
+
+----------------------------------------
+ TRAINER BATTLES
+----------------------------------------
+Legacy single-line:
+  trainerbattle_single TRAINER_ID, IntroText, DefeatText
+  trainerbattle_double TRAINER_ID, Intro, Defeat, NotEnough
+  trainerbattle_rematch TRAINER_ID, Intro, Defeat
+  trainerbattle_rematch_double TRAINER_ID, Intro, Defeat, NotEnough
+  trainerbattle_no_intro TRAINER_ID, DefeatText
+  trainerbattle_two_trainers TRAINER_A, IntroA, DefeatA,
+      TRAINER_B, IntroB, DefeatB
+
+Expanded form (auto-generates text labels):
+  trainerbattle_single TRAINER_RIVAL
+      intro "Let's battle!"
+      defeated "You're tough..."
+      postbattle "I'll train harder."
+
+Text labels must be named text blocks for legacy form.
+Expanded form creates them automatically.
 
 ----------------------------------------
  PASS-THROUGH
@@ -306,7 +433,7 @@ automatically (setup.pory definitions take priority).
 ========================================
 Six states shown by torch status:
 
-  [     OK     ]   In sync — workspace matches last write
+  [     OK     ]   In sync -- workspace matches last write
   [   STALE    ]   Workspace edited since last sync
   [   DRIFT    ]   Game file edited outside TORCH
   [  ORPHAN    ]   No game folder found for this map
@@ -321,10 +448,13 @@ torch sync (all) skips ORPHAN and MISSING WS maps.
 ========================================
 torch build does three things:
 
-  1. Auto-sync — syncs all stale enrolled maps first
-  2. Build — runs make with all CPU cores
-  3. Error diagnosis — if build fails, pattern-matches
-     the error output and suggests a fix
+  1. Auto-sync -- syncs all stale enrolled maps first
+  2. Pre-build safety checks:
+     a. Sanitise empty script fields in map.json
+     b. Regenerate missing .inc files
+     c. Precompile all .pory files
+  3. Build -- runs make with all CPU cores
+  4. Error diagnosis -- pattern-matches errors, suggests fix
 
 Recognised error patterns:
   - stddef.h missing        -> run fixdev
@@ -344,7 +474,7 @@ Verified snapshots:
   (default: 3).
 
 auto_build setting:
-  true (default) — safe operations auto-build without
+  true (default) -- safe operations auto-build without
   prompting. Destructive operations always prompt.
 
 ========================================
@@ -354,7 +484,7 @@ MAP GUARD (automatic, every sync):
   - Fixes Porymap "id" -> "map_section" rename bug
   - Restores missing "name" fields on MAPSEC entries
   - Restores custom mapsec entries from backup
-  - Safe on any project — all fixes check file existence
+  - Safe on any project -- all fixes check file existence
 
 WORKSPACE SNAPSHOTS (automatic, every sync):
   - Zips all .txt and .pory files before sync
@@ -370,16 +500,31 @@ LABEL VALIDATION (automatic, every sync):
 
 CONSTANT VALIDATION (automatic, every sync):
   - Checks FLAG_, VAR_, TRAINER_, SE_, MUS_, FANFARE_,
-    SPECIES_ constants against game headers
+    SPECIES_, ITEM_ constants against game headers
   - Checks special function names against specials.inc
   - Warns on unrecognised constants before build
 
 COLLISION DETECTION (automatic, every sync):
   - Errors if both Foo.txt and Foo.pory exist (ambiguous)
 
-INLINE HINTS:
-  - Every picker-driven field shows a brief hint
-  - Visible when adding or editing beats in the editor
+========================================
+ COMPILE-TIME VALIDATION
+========================================
+The compiler validates these constant types against
+your game's actual header files:
+
+  FLAG_*       include/constants/flags.h
+  VAR_*        include/constants/vars.h
+  TRAINER_*    include/constants/trainers.h
+  SE_*         include/constants/songs.h
+  MUS_*        include/constants/songs.h
+  FANFARE_*    include/constants/songs.h
+  SPECIES_*    include/constants/species.h
+  ITEM_*       include/constants/items.h
+  Special      data/specials.inc
+
+Unrecognised constants produce a warning, not a hard
+error, so pass-through Poryscript still compiles.
 
 ========================================
  SCORCH
@@ -392,6 +537,8 @@ Modes:
   torch scorch <category>  Single category
   torch scorch report      Scan only (saves report file)
   torch scorch restore     Restore from SCORCH snapshot
+  torch scorch phoenix     Full vanilla wipe
+  torch scorch phoenix plan  Dry-run report
 
 Eight categories:
   maps        Vanilla maps
@@ -408,20 +555,47 @@ cross-reference analysis. SCORCH takes a full snapshot
 before any removal for safe rollback.
 
 ========================================
+ EXPANSION COMPATIBILITY
+========================================
+TORCH auto-detects your pokeemerald-expansion version
+and gates features accordingly.
+
+Supported: v1.6.0 through latest + vanilla pokeemerald.
+
+Version-sensitive features:
+  .party trainer format      v1.9.0+
+  Multi battle types         v1.11.0+
+  Time-of-day encounters     v1.12.0+
+  Smol compression           v1.13.0+
+  make release               v1.14.0+
+  Learnset teaching type     v1.14.0+
+
+If a feature isn't available in your version, TORCH
+shows a clear message and falls back gracefully.
+
+========================================
  GOTCHAS
 ========================================
-  - Never use Unicode ellipsis (...) — use three dots (...)
+  - Never use Unicode ellipsis -- use three ASCII dots (...)
   - Escape \n and \p as \\n and \\p inside Python strings
-  - Trainer display names: max 7 characters
+    (they're Poryscript text commands, not escape codes)
+  - Trainer display names: max 7 characters in .h format;
+    .party format supports longer names
   - Deleting a .txt script: also update/delete the NPC
-    in Porymap
+    in Porymap / TORCH Studio
   - Legacy maps: check legacy.pory for existing mapscripts
     before adding to setup.pory (avoid duplicate labels)
-  - torch battle validates species/moves/items/map against
-    game headers automatically
+  - walkto uses VAR_0x8004-0x8007 -- don't use these vars
+    in the same script
+  - camera reset uses VAR_0x8004/VAR_0x8005 as scratch
+  - Camera commands cannot use '+' parallel syntax
+  - walkto cannot use '+' parallel syntax
+  - Pokemon actor faint/revive requires the `pokemon`
+    directive, not `alias`
 
 ========================================
  SEE ALSO
 ========================================
-  Full user guide:  ~/ROMHacking/TORCH/guide.md
-  Emotes config:    ~/ROMHacking/TORCH/config/emotes.conf
+  Full user guide:  docs/guide.md
+  Emotes config:    config/emotes.conf
+  Web GUI:          torch gui (http://localhost:8642)
