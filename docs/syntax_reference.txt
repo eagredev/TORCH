@@ -1,0 +1,427 @@
+========================================
+ TORCH v0.1.0-alpha — QUICK REFERENCE
+========================================
+
+COMMANDS
+--------
+  torch                        Main menu
+  torch menu                   Main menu (alias)
+  torch init                   First-time setup
+  torch sync MapName           Sync one map to game folder
+  torch sync                   Sync all enrolled maps
+  torch build                  Build ROM (auto-syncs stale maps)
+  torch restore                Verified build snapshot restore
+  torch restore MapName        Interactive workspace restore
+  torch scene                  Script Studio hub
+  torch scene Map Scene        Open a specific scene directly
+  torch battle                 Trainers module
+  torch battle migrate         Migrate legacy .h to .party format
+  torch scorch                 SCORCH full-scan wizard
+  torch scorch <category>      Category mode (see SCORCH section)
+  torch scorch report          Scan-only report (saved to file)
+  torch scorch restore         Restore from SCORCH snapshot
+  torch clean                  Alias for torch scorch
+  torch cleanup                Alias for torch scorch
+  torch status                 Map health indicators
+  torch enroll [MapName|--all] Enroll maps in registry
+  torch unenroll MapName       Remove map from registry
+  torch studio                 ROM Studio (title, game code)
+  torch config                 Config Manager
+  torch backup [tag]           Back up TORCH package
+  torch backup list            Show backups with tier labels
+  torch backup prune           Enforce retention policy
+  torch sandbox                Dev Sandbox (dev build only)
+  torch update                 Self-update from release zip
+  torch --project "Name" cmd   Select project (multi-project)
+  torch <name>                 Standalone compile (test only)
+
+========================================
+ WORKSPACE
+========================================
+  ~/ROMHacking/TORCH/<Project>/<MapName>/
+    setup.pory               Mapscripts, shared text/movement
+    legacy.pory              Auto-migrated old assembly
+    battle_TRAINER_*.pory    Battle text from torch battle
+    *.txt                    TorScript files (compiled)
+    *.pory                   Raw Poryscript (passed through)
+    backups/                 Snapshots + safety net zips
+
+========================================
+ TEXTBOX LIMITS
+========================================
+  38 chars max per line
+  2 lines per textbox
+  Line break codes:
+    \n   New line (within same box)
+    \p   New paragraph (press A, new box)
+    \l   Scroll line
+    $    End of string
+
+----------------------------------------
+ ACTORS
+----------------------------------------
+player                     The player character
+npc5                       Object event local ID 5
+alias buster npc5          "buster" = LOCALID_BUSTER (5)
+                           Auto-generates const declaration.
+
+----------------------------------------
+ MESSAGES
+----------------------------------------
+Inline (auto-creates text label):
+  msg "BUSTER: Hello there!$"
+
+Multi-line (continuation lines in quotes):
+  msg "BUSTER: This is a long\n"
+      "piece of dialogue.\p"
+      "And it continues.$"
+
+NPC-style (no button wait):
+  msgnpc "BUSTER: Hey!$"
+
+Named text block (top-level, outside scripts):
+  text MyTextLabel "The content here.$"
+
+Auto-adds $ at end if you forget it.
+
+----------------------------------------
+ MOVEMENT
+----------------------------------------
+buster face down           Face direction (up/down/left/right)
+buster face player         Face toward the player
+buster face away           Face away from the player
+buster walk up 3           Walk 3 tiles up (normal speed)
+buster walkfast up 7       Walk fast (run speed)
+buster walkslow down 2     Walk slow
+buster run left 4          Same as walkfast
+buster jump up             1-tile jump
+buster jump up 2           2-tile jump
+buster slide right 3       Slide (no walk animation)
+buster do MyMoveLabel      Play a named movement block
+
+Walk-to-target (dynamic destination, resolves at runtime):
+  clyde walkto 25 61             Absolute: walk to tile (25,61)
+  clyde walkto player 0 1        Relative: walk to (player_x, player_y+1)
+  clyde walkto buster -1 0       Relative: walk to (buster_x-1, buster_y)
+  clyde walkfastto player 1 0    Fast walk to target
+  clyde walkslowto buster 0 2    Slow walk to target
+  clyde runto player 0 1         Same as walkfastto
+
+  Walks L-shaped (X axis first, then Y axis).
+  Offsets: positive X = right, positive Y = down.
+  Cannot use + parallel syntax (use separate lines).
+
+Parallel movement (same line, + separator):
+  buster face down + player face down
+
+All movement auto-generates applymovement + waitmovement.
+
+----------------------------------------
+ NAMED MOVEMENT BLOCKS
+----------------------------------------
+Multi-line (top-level, outside scripts):
+
+  movement MyMoveLabel
+    face_player
+    delay_16
+    delay_16
+    face_up
+  endmovement
+
+Single-line:
+  movement MyMoveLabel { face_down, walk_up, walk_up }
+
+Then reference with: buster do MyMoveLabel
+
+MOVEMENT BLOCK MANAGER (Script Studio):
+  Press [m] in the editor to manage blocks visually.
+  - Create, edit, rename, and delete blocks in setup.pory
+  - Categorized command picker (Face, Walk, Jump, etc.)
+  - Reference checker warns before deleting used blocks
+  - 'do' beat picker shows existing blocks
+
+----------------------------------------
+ EMOTES
+----------------------------------------
+buster emote !             Exclamation mark
+buster emote ?             Question mark
+buster emote !!            Double exclamation
+buster emote x             X mark
+buster emote heart         Heart
+buster emote ...           Dot dot dot
+
+Custom emotes: add to ~/ROMHacking/TORCH/config/emotes.conf
+
+----------------------------------------
+ SCREEN EFFECTS
+----------------------------------------
+fade black                 Fade to black
+fade in                    Fade from black
+fade from black            Fade from black (explicit)
+fade white                 Fade to white
+fade from white            Fade from white
+fade in white              Fade from white (alias)
+
+----------------------------------------
+ SOUND
+----------------------------------------
+sound SE_EXIT              Play sound effect
+music MUS_ROUTE101         Play background music
+fanfare MUS_OBTAIN_ITEM    Play fanfare + wait
+cry SPECIES_KOFFING        Play Pokemon cry
+
+----------------------------------------
+ TIMING
+----------------------------------------
+pause                      Short pause (~0.27s / 16 frames)
+pause long                 Longer pause (~0.53s / 32 frames)
+pause 60                   Custom frame count
+
+----------------------------------------
+ FLAGS & VARIABLES
+----------------------------------------
+flag set FLAG_NAME         Set a flag
+flag clear FLAG_NAME       Clear a flag
+var VAR_NAME value         Set a variable
+gotoif FLAG_NAME Label     Goto if flag is set
+
+----------------------------------------
+ OBJECT MANAGEMENT
+----------------------------------------
+hide buster                Despawn (removeobject)
+show buster                Spawn (addobject)
+remove buster              Same as hide
+add buster                 Same as show
+setpos clyde 28 62         Set NPC position
+
+----------------------------------------
+ CAMERA
+----------------------------------------
+shake 1 8                  Shake camera (intensity, count)
+camera pan down 2          Pan camera 2 tiles south
+camera pan up 3            Pan camera 3 tiles north
+camera pan left 1          Pan camera 1 tile west
+camera pan right 4         Pan camera 4 tiles east
+camera reset               Recenter camera on player
+camera reset warp MAP X Y  Warp to specific location (ends script)
+camera reset 0 2           Manual offset reset (cross-label use)
+
+Camera pan auto-spawns an invisible camera object on
+first use, then moves it via applymovement. Multiple
+pans accumulate: pan down 3 + pan right 2 means reset
+corrects by (2, 3). Opposing pans cancel.
+
+Camera reset uses a small engine patch (auto-applied on
+first use) to reverse the position offset caused by
+CameraMove(). Script execution continues normally after
+reset -- no warp, no music restart, no NPC position reset.
+
+Camera reset warp is an alternative that warps the player
+to explicit coordinates. It terminates script execution.
+Use for cross-map cutscene endings.
+
+Camera reset with manual offsets is for cross-label
+scenarios where the compiler cannot track accumulated
+pans (e.g. goto from a panning script to a reset script).
+
+Notes:
+- Camera commands cannot use '+' parallel syntax
+- camera reset uses VAR_0x8004/VAR_0x8005 as scratch
+- Battles destroy the camera object but the offset
+  persists; camera reset still works after battles
+
+----------------------------------------
+ SCRIPT FLOW
+----------------------------------------
+label SceneName            Start a new script block
+script SceneName           Same as label (alternative)
+lock                       Lock all movement (lockall)
+end                        Release all + end
+release                    Release (single NPC) + end
+goto SceneName             Jump to label
+call SceneName             Call subroutine
+return                     Return from call
+closemessage               Close dialog box
+faceplayer                 NPC faces player
+special FuncName           Call special function
+waitstate                  Wait for special to finish
+
+Trainer battles:
+  trainerbattle_single TRAINER_ID, IntroText, DefeatText
+  trainerbattle_double TRAINER_ID, IntroText, DefeatText,
+      NotEnoughText, AfterLabel
+
+  Text labels must be named text blocks (battle wizard
+  creates these for you).
+
+----------------------------------------
+ GIVE ITEM
+----------------------------------------
+give ITEM_CONSTANT [quantity]
+    Give an item to the player with automatic bag-full safety check.
+    Compiles to: giveitem() + compare(VAR_RESULT, FALSE) + goto_if_eq(BagFull)
+    BagFull label auto-generated at end of script.
+    Examples:
+        give ITEM_POTION        -- give 1 potion
+        give ITEM_RARE_CANDY 3  -- give 3 rare candies
+
+----------------------------------------
+ PASS-THROUGH
+----------------------------------------
+pory somecommand(args)     Outputs Poryscript line as-is
+raw somecommand args       Same as pory
+
+Examples:
+  pory applymovement(LOCALID_CLYDE, MyMovement)
+  pory waitmovement(0)
+  pory lock
+  pory release
+  pory end
+
+----------------------------------------
+ COMMENTS
+----------------------------------------
+# This line is ignored     Script comment (not in output)
+// Asm comment             Preserved in .pory output
+@ Alt comment              Also preserved in .pory output
+
+========================================
+ OUTPUT STRUCTURE (scripts.pory)
+========================================
+  1. const declarations (from aliases)
+  2. setup.pory contents
+  3. legacy.pory contents (if exists)
+  4. compiled .txt scripts (alphabetical)
+  5. raw .pory files (alphabetical, excl. setup/legacy)
+
+Sections are marked with:
+  // # REGION: filename
+  // # END REGION: filename
+
+Duplicate text blocks across regions are deduplicated
+automatically (setup.pory definitions take priority).
+
+========================================
+ MAP HEALTH
+========================================
+Six states shown by torch status:
+
+  [     OK     ]   In sync — workspace matches last write
+  [   STALE    ]   Workspace edited since last sync
+  [   DRIFT    ]   Game file edited outside TORCH
+  [  ORPHAN    ]   No game folder found for this map
+  [ MISSING WS ]   Enrolled but workspace folder missing
+  [    NEW     ]   Enrolled but never synced
+
+torch build auto-syncs all STALE maps before building.
+torch sync (all) skips ORPHAN and MISSING WS maps.
+
+========================================
+ BUILD FEATURES
+========================================
+torch build does three things:
+
+  1. Auto-sync — syncs all stale enrolled maps first
+  2. Build — runs make with all CPU cores
+  3. Error diagnosis — if build fails, pattern-matches
+     the error output and suggests a fix
+
+Recognised error patterns:
+  - stddef.h missing        -> run fixdev
+  - ROM region overflowed   -> use SCORCH to remove content
+  - Missing map data file   -> check map folder
+  - Poryscript .pory error  -> check script syntax
+  - Undeclared constant     -> check header files
+  - C syntax error          -> check source file
+
+Verified snapshots:
+  After every successful build, TORCH saves a verified
+  snapshot of all enrolled map workspaces. Use
+  torch restore (no map name) to roll back to the last
+  known-good state.
+
+  max_verified_snapshots setting controls retention
+  (default: 3).
+
+auto_build setting:
+  true (default) — safe operations auto-build without
+  prompting. Destructive operations always prompt.
+
+========================================
+ SYNC SAFETY
+========================================
+MAP GUARD (automatic, every sync):
+  - Fixes Porymap "id" -> "map_section" rename bug
+  - Restores missing "name" fields on MAPSEC entries
+  - Restores custom mapsec entries from backup
+  - Safe on any project — all fixes check file existence
+
+WORKSPACE SNAPSHOTS (automatic, every sync):
+  - Zips all .txt and .pory files before sync
+  - Stored in backups/snapshots/ inside the map folder
+  - Pruned to max_snapshots (default 10)
+  - Pinned snapshots exempt from pruning
+
+LABEL VALIDATION (automatic, every sync):
+  - Checks all goto/call/gotoif targets exist
+  - Checks trainerbattle text label references
+  - Checks movement block references (do commands)
+  - Reports undefined labels with source file + context
+
+CONSTANT VALIDATION (automatic, every sync):
+  - Checks FLAG_, VAR_, TRAINER_, SE_, MUS_, FANFARE_,
+    SPECIES_ constants against game headers
+  - Checks special function names against specials.inc
+  - Warns on unrecognised constants before build
+
+COLLISION DETECTION (automatic, every sync):
+  - Errors if both Foo.txt and Foo.pory exist (ambiguous)
+
+INLINE HINTS:
+  - Every picker-driven field shows a brief hint
+  - Visible when adding or editing beats in the editor
+
+========================================
+ SCORCH
+========================================
+Vanilla content removal wizard. Removes stock Pokemon
+Emerald content you don't need in your ROM hack.
+
+Modes:
+  torch scorch             Full-scan wizard (Singe mode)
+  torch scorch <category>  Single category
+  torch scorch report      Scan only (saves report file)
+  torch scorch restore     Restore from SCORCH snapshot
+
+Eight categories:
+  maps        Vanilla maps
+  trainers    Vanilla trainers
+  encounters  Wild encounter tables
+  frontier    Battle Frontier data
+  scripts     Shared vanilla scripts
+  tilesets    Unused tilesets
+  graphics    Graphics (scan only)
+  music       Music (scan only)
+
+Items are tagged SAFE, BLOCKED, or CAUTION based on
+cross-reference analysis. SCORCH takes a full snapshot
+before any removal for safe rollback.
+
+========================================
+ GOTCHAS
+========================================
+  - Never use Unicode ellipsis (...) — use three dots (...)
+  - Escape \n and \p as \\n and \\p inside Python strings
+  - Trainer display names: max 7 characters
+  - Deleting a .txt script: also update/delete the NPC
+    in Porymap
+  - Legacy maps: check legacy.pory for existing mapscripts
+    before adding to setup.pory (avoid duplicate labels)
+  - torch battle validates species/moves/items/map against
+    game headers automatically
+
+========================================
+ SEE ALSO
+========================================
+  Full user guide:  ~/ROMHacking/TORCH/guide.md
+  Emotes config:    ~/ROMHacking/TORCH/config/emotes.conf

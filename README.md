@@ -188,8 +188,8 @@ python3 ~/torch build
 
 ## Documentation
 
-Full manual: [`manual.md`](manual.md)
-TorScript syntax: [`config/syntax_reference.txt`](config/syntax_reference.txt)
+User guide: [`docs/guide.md`](docs/guide.md)
+TorScript syntax reference: [`docs/syntax_reference.txt`](docs/syntax_reference.txt)
 
 ---
 
