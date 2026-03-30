@@ -183,17 +183,18 @@ const STYLES = `
 
 /* Dialogue */
 .npcd-textarea {
-  width: 100%; min-height: 80px; resize: vertical;
+  width: 30ch; max-width: 100%; min-height: 80px; resize: vertical;
   background: var(--bg-tertiary, #45475a); color: var(--text-primary, #cdd6f4);
   border: 1px solid var(--border, #313244); border-radius: 6px;
-  padding: 0.5rem 0.6rem; font-size: 0.8rem; font-family: inherit; line-height: 1.4;
-  box-sizing: border-box;
+  padding: 0.5rem 0.65rem; font-size: 0.8rem; font-family: "Courier New", monospace;
+  line-height: 1.4;
 }
 .npcd-textarea:focus { outline: none; border-color: var(--accent, #89b4fa); }
 .npcd-readonly-text {
   background: var(--bg-tertiary, #45475a); border: 1px solid var(--border, #313244);
-  border-radius: 6px; padding: 0.5rem 0.6rem; font-size: 0.8rem;
+  border-radius: 6px; padding: 0.5rem 0.65rem; font-size: 0.8rem;
   color: var(--text-secondary, #bac2de); white-space: pre-wrap; line-height: 1.4;
+  width: 30ch; max-width: 100%; font-family: "Courier New", monospace;
 }
 .npcd-edit-hint {
   font-size: 0.75rem; color: var(--text-muted, #6c7086); margin-top: 0.35rem;
@@ -219,9 +220,9 @@ const STYLES = `
   background: var(--bg-primary, #11111b);
   border: 2px solid var(--border, #313244);
   border-radius: 6px;
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem 0.65rem;
   color: var(--text-primary, #cdd6f4);
-  max-width: 320px; white-space: pre-wrap; word-break: break-all;
+  width: 30ch; max-width: 100%; white-space: pre-wrap; word-break: break-all;
 }
 
 /* Referenced by */
@@ -588,24 +589,25 @@ function _injectModalCSS() {
 .npcm-col-side {
   width: 260px; flex-shrink: 0; padding: 0.6rem 0.8rem; overflow-y: auto;
 }
-.npcm-section { margin-bottom: 0.7rem; }
+.npcm-section { margin-bottom: 0.85rem; }
 .npcm-section-title {
   font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.05em; color: var(--accent, #d4a017);
   margin-bottom: 0.35rem;
 }
 .npcm-textarea {
-  width: 100%; max-width: 360px; min-height: 120px; resize: vertical;
+  width: 30ch; max-width: 100%; min-height: 120px; resize: vertical;
   background: var(--surface-1, #1a1a1a); color: var(--text-primary, #fff);
-  border: 1px solid var(--border-subtle, #2a2a2a); border-radius: 4px;
-  padding: 0.4rem 0.5rem; font-size: 0.8rem; font-family: "Courier New", monospace;
-  line-height: 1.4; box-sizing: border-box;
+  border: 1px solid var(--border-subtle, #2a2a2a); border-radius: 6px;
+  padding: 0.5rem 0.65rem; font-size: 0.8rem; font-family: "Courier New", monospace;
+  line-height: 1.4;
 }
 .npcm-textarea:focus { outline: none; border-color: var(--accent, #d4a017); }
 .npcm-readonly-text {
   background: var(--surface-1, #1a1a1a); border: 1px solid var(--border-subtle, #2a2a2a);
-  border-radius: 4px; padding: 0.4rem 0.5rem; font-size: 0.8rem;
+  border-radius: 6px; padding: 0.5rem 0.65rem; font-size: 0.8rem;
   color: var(--text-secondary, #ccc); white-space: pre-wrap; line-height: 1.4;
+  width: 30ch; max-width: 100%; font-family: "Courier New", monospace;
 }
 .npcm-hint { font-size: 0.75rem; color: var(--text-dim, #888); font-style: italic; margin-top: 0.2rem; }
 .npcm-dlg-controls {
@@ -613,11 +615,11 @@ function _injectModalCSS() {
 }
 .npcm-select {
   background: var(--surface-1, #1a1a1a); color: var(--text-primary, #fff);
-  border: 1px solid var(--border-subtle, #2a2a2a); border-radius: 4px;
+  border: 1px solid var(--border-subtle, #2a2a2a); border-radius: 6px;
   padding: 0.25rem 0.4rem; font-size: 0.72rem; max-width: 180px;
 }
 .npcm-save-btn {
-  padding: 0.25rem 0.6rem; border: none; border-radius: 4px;
+  padding: 0.25rem 0.6rem; border: none; border-radius: 6px;
   background: var(--accent, #d4a017); color: #111;
   font-size: 0.75rem; font-weight: 600; cursor: pointer;
 }
@@ -639,7 +641,8 @@ function _injectModalCSS() {
   border: 2px solid #4a5570;
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
-  width: 33ch;
+  width: 30ch;
+  max-width: 100%;
   box-shadow: inset 0 1px 4px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
 }
 .npcm-gba-text {
@@ -647,6 +650,11 @@ function _injectModalCSS() {
   font-size: 0.78rem; line-height: 1.5;
   color: #e0e4f0; white-space: pre-wrap;
   text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+}
+@media (max-width: 600px) {
+  .npcm-columns { flex-direction: column; }
+  .npcm-col-main { border-right: none; border-bottom: 1px solid var(--border-subtle, #2a2a2a); }
+  .npcm-col-side { width: auto; }
 }
 `;
   document.head.appendChild(_modalStyleEl);

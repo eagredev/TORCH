@@ -4338,8 +4338,19 @@ def _build_trigger_info(game_path, map_name, cast, object_events,
         }
     nx, ny = obj.get("x", 0), obj.get("y", 0)
 
+    # Load collision data so patrol positions exclude impassable tiles.
+    coll_grid = None
+    beh_grid = None
+    try:
+        from torch.web.collision import get_collision_grid
+        coll_result = get_collision_grid(game_path, map_name)
+        if coll_result is not None:
+            _, _, coll_grid, beh_grid = coll_result
+    except Exception:
+        pass  # Graceful fallback — unfiltered positions are acceptable
+
     # Compute all valid NPC patrol positions + facings from movement_type.
-    npc_positions = _compute_patrol_positions(obj)
+    npc_positions = _compute_patrol_positions(obj, coll_grid, beh_grid)
 
     # Default facing for the sight line
     default_facing = npc_positions[0]["facing"] if npc_positions else "down"
@@ -4360,13 +4371,21 @@ def _build_trigger_info(game_path, map_name, cast, object_events,
     }
 
 
-def _compute_patrol_positions(obj):
+def _compute_patrol_positions(obj, collision_grid=None, behavior_grid=None):
     """Compute all tiles an NPC could stand on + which way they face.
 
     Returns a list of {x, y, facing} dicts derived from the NPC's
     movement_type and movement_range_x/y.  For stationary NPCs, returns
     a single entry at the origin.
+
+    When *collision_grid* and/or *behavior_grid* are provided, tiles that
+    are impassable (collision != 0 or behavior in the impassable set) are
+    excluded.  The NPC's home tile is always kept.  If collision data is
+    unavailable (None), all tiles in the range are returned (legacy behavior).
     """
+    # Behaviors that should be treated as impassable walls even when
+    # blockdata collision is 0 (MB_IMPASSABLE + wall-type behaviors).
+    _IMPASSABLE_BEHAVIORS = {1, 48, 49, 50, 51, 52, 53, 54, 55, 192, 193}
     nx = obj.get("x", 0)
     ny = obj.get("y", 0)
     mt = (obj.get("movement_type", "") or "").upper()
@@ -4409,6 +4428,26 @@ def _compute_patrol_positions(obj):
         # Stationary: single position, facing from movement_type
         facing = _facing_from_movement_type(obj.get("movement_type", ""))
         positions.append({"x": nx, "y": ny, "facing": facing})
+
+    # --- Filter impassable tiles when collision data is available ---
+    if collision_grid is not None or behavior_grid is not None:
+        def _is_passable(px, py):
+            """Return True if (px, py) is walkable."""
+            if collision_grid is not None:
+                if 0 <= py < len(collision_grid) and 0 <= px < len(collision_grid[0]):
+                    if collision_grid[py][px] != 0:
+                        return False
+            if behavior_grid is not None:
+                if 0 <= py < len(behavior_grid) and 0 <= px < len(behavior_grid[0]):
+                    if behavior_grid[py][px] in _IMPASSABLE_BEHAVIORS:
+                        return False
+            return True
+
+        filtered = [p for p in positions
+                    if (p["x"] == nx and p["y"] == ny) or _is_passable(p["x"], p["y"])]
+        # Only use filtered list if it's non-empty (safety: always keep at least origin)
+        if filtered:
+            positions = filtered
 
     return positions
 
@@ -6391,3 +6430,4 @@ import torch.web.api_map_render  # noqa: E402,F401
 import torch.web.api_events  # noqa: E402,F401
 import torch.web.api_music  # noqa: E402,F401
 import torch.web.api_stamps  # noqa: E402,F401
+import torch.web.collision  # noqa: E402,F401

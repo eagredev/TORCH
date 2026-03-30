@@ -12,6 +12,7 @@ import { api, postApi } from "./app.js";
 import { esc } from "./utils.js";
 import { ideEmit, IDE_MODE_CHANGED } from "./ide.js";
 import { toggleGrid, toggleNpcs, toggleWarps, toggleTriggers, toggleSigns, toggleBorders } from "./mapCanvas.js";
+import { setCollisionVisible, isCollisionVisible } from "./collisionOverlay.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -162,6 +163,8 @@ const MENUS = [
       { label: "Toggle Triggers", shortcut: "Shift+T", action: () => toggleTriggers() },
       { label: "Toggle Signs", shortcut: "Shift+S", action: () => toggleSigns() },
       { label: "Toggle Border Tiles", shortcut: "B", action: () => toggleBorders() },
+      { sep: true },
+      { label: "Toggle Collision", shortcut: "Shift+C", action: () => setCollisionVisible(!isCollisionVisible()) },
     ],
   },
   {
@@ -466,6 +469,7 @@ function _onKeyDown(e) {
       if (e.key === "W") { toggleWarps(); return; }
       if (e.key === "T") { toggleTriggers(); return; }
       if (e.key === "S") { toggleSigns(); return; }
+      if (e.key === "C") { setCollisionVisible(!isCollisionVisible()); return; }
     }
   }
 
@@ -605,6 +609,7 @@ function _showShortcuts() {
         <tr><td>Shift+W</td><td>Toggle Warps</td></tr>
         <tr><td>Shift+T</td><td>Toggle Triggers</td></tr>
         <tr><td>Shift+S</td><td>Toggle Signs</td></tr>
+        <tr><td>Shift+C</td><td>Toggle Collision</td></tr>
         <tr><th colspan="2">Scripts Mode</th></tr>
         <tr><td>J / K</td><td>Navigate beats</td></tr>
         <tr><td>Enter</td><td>Edit beat</td></tr>

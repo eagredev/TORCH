@@ -13,6 +13,8 @@ import { initContextPanel, cleanupContextPanel } from "./contextPanel.js";
 import { initToolbar, cleanupToolbar } from "./toolbar.js";
 import { initScriptDrawer, cleanupScriptDrawer } from "./scriptDrawer.js";
 import { initScriptsMode, cleanupScriptsMode } from "./scriptsMode.js";
+import { initDexWidget, cleanupDexWidget } from "./dexStatusWidget.js";
+import { initCollisionOverlay, cleanupCollisionOverlay } from "./collisionOverlay.js";
 
 // ---------------------------------------------------------------------------
 // IDE Event Bus (shared across panels)
@@ -152,9 +154,11 @@ export function render(container) {
   initToolbar(document.getElementById("ide-toolbar"));
   initMapTree(document.getElementById("ide-left"));
   initMapCanvas(document.getElementById("ide-center"));
+  initCollisionOverlay(document.getElementById("ide-canvas-wrap"));
   initContextPanel(document.getElementById("ide-right"));
   initScriptDrawer(document.getElementById("ide-drawer"));
   initScriptsMode();
+  initDexWidget(container);
 
   // Wire resize handles
   _resizeCleanups.push(
@@ -276,9 +280,11 @@ export function cleanup() {
   cleanupToolbar();
   cleanupMapTree();
   cleanupMapCanvas();
+  cleanupCollisionOverlay();
   cleanupContextPanel();
   cleanupScriptDrawer();
   cleanupScriptsMode();
+  cleanupDexWidget();
 
   if (_styleEl) {
     _styleEl.remove();

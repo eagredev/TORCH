@@ -818,6 +818,14 @@ main:has(.ide-root) {
  * Scripts Mode — overlay, transport bar, dialogue
  * ------------------------------------------------------------------------- */
 
+/* Collision overlay sits between map canvas and script overlay */
+.ide-collision-overlay-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
 /* Overlay canvas sits on top of map canvas */
 .ide-script-overlay-canvas {
   position: absolute;
@@ -1780,4 +1788,294 @@ main:has(.ide-root) {
 @keyframes ide-stamp-fade-in {
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ---------------------------------------------------------------------------
+ * Dex Status Widget — floating pop-out from status bar
+ * ------------------------------------------------------------------------- */
+
+.dex-widget-toggle {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  background: none;
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  line-height: 1.4;
+}
+.dex-widget-toggle:hover {
+  color: var(--text-primary, #fff);
+  border-color: var(--accent, #d4a017);
+}
+.dex-widget-toggle.active {
+  color: var(--accent, #d4a017);
+  border-color: var(--accent, #d4a017);
+  background: rgba(212, 160, 23, 0.1);
+}
+
+/* Floating panel */
+.dex-widget-panel {
+  position: fixed;
+  bottom: 28px;  /* just above the 24px status bar */
+  right: 8px;
+  width: 320px;
+  max-height: 450px;
+  background: var(--surface-1, #111);
+  border: 1px solid var(--border-emphasis, #333);
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  /* Hidden by default — slide up on open */
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.dex-widget-panel.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Header */
+.dex-widget-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-2, #1a1a1a);
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  flex-shrink: 0;
+}
+.dex-widget-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent, #d4a017);
+  flex-shrink: 0;
+}
+.dex-widget-search {
+  flex: 1;
+  min-width: 0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.7rem;
+  background: var(--surface-0, #0a0a0a);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 3px;
+  color: var(--text-primary, #fff);
+  outline: none;
+}
+.dex-widget-search:focus {
+  border-color: var(--accent, #d4a017);
+}
+.dex-widget-search::placeholder {
+  color: var(--text-dim, #666);
+}
+.dex-widget-close {
+  background: none;
+  border: none;
+  color: var(--text-muted, #888);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.dex-widget-close:hover {
+  color: var(--text-primary, #fff);
+}
+
+/* Scrollable body */
+.dex-widget-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Loading / empty states */
+.dex-widget-loading,
+.dex-widget-empty {
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-dim, #666);
+}
+
+/* Species list rows */
+.dex-widget-list {
+  display: flex;
+  flex-direction: column;
+}
+.dex-widget-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.dex-widget-row:hover {
+  background: var(--surface-2, #1a1a1a);
+}
+.dex-widget-row-sprite {
+  flex-shrink: 0;
+}
+.dex-widget-row-name {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--text-primary, #fff);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dex-widget-row-types {
+  display: flex;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+.dex-widget-type-badge {
+  display: inline-block;
+  font-size: 0.55rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  color: #111;
+  font-weight: 600;
+}
+
+/* Detail view */
+.dex-widget-detail {
+  padding: 0.5rem 0.6rem;
+}
+.dex-widget-back {
+  font-size: 0.7rem;
+  color: var(--accent, #d4a017);
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: 0.4rem;
+  cursor: pointer;
+}
+.dex-widget-back:hover {
+  text-decoration: underline;
+}
+.dex-widget-detail-header {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+.dex-widget-detail-sprite {
+  flex-shrink: 0;
+}
+.dex-widget-detail-info {
+  flex: 1;
+  min-width: 0;
+}
+.dex-widget-detail-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+}
+.dex-widget-detail-num {
+  font-size: 0.7rem;
+  color: var(--text-dim, #666);
+  font-weight: 400;
+}
+.dex-widget-detail-types {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.2rem 0;
+}
+.dex-widget-detail-abilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+.dex-widget-ability {
+  font-size: 0.6rem;
+  padding: 0.1rem 0.3rem;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  color: var(--text-secondary, #ccc);
+  cursor: help;
+}
+
+/* Stat bars */
+.dex-widget-stats {
+  margin-bottom: 0.4rem;
+}
+.dex-widget-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 15px;
+}
+.dex-widget-stat-label {
+  width: 2.2em;
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: var(--text-dim, #666);
+  text-align: right;
+}
+.dex-widget-stat-num {
+  width: 2em;
+  font-size: 0.6rem;
+  color: var(--text-secondary, #ccc);
+  text-align: right;
+  font-family: monospace;
+}
+.dex-widget-stat-bar {
+  flex: 1;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.dex-widget-stat-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.dex-widget-bst-row {
+  margin-top: 2px;
+  border-top: 1px solid var(--border-subtle, #2a2a2a);
+  padding-top: 2px;
+}
+.dex-widget-bst-num {
+  font-weight: 600;
+  color: var(--accent, #d4a017);
+}
+
+/* Evolution chain */
+.dex-widget-evo-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border-subtle, #2a2a2a);
+  font-size: 0.65rem;
+}
+.dex-widget-evo-arrow {
+  color: var(--text-dim, #666);
+}
+.dex-widget-evo-name {
+  color: var(--text-secondary, #ccc);
+  cursor: pointer;
+}
+.dex-widget-evo-name:hover {
+  color: var(--accent, #d4a017);
+  text-decoration: underline;
+}
+.dex-widget-evo-name.current {
+  color: var(--accent, #d4a017);
+  font-weight: 600;
 }

@@ -81,6 +81,7 @@ from torch.tests import (
     test_inc_decompiler,
     test_custom_stamps,
     test_api_stamps,
+    test_collision,
 )
 
 _SUITES = [
@@ -170,6 +171,7 @@ _SUITES = [
     ("inc_decompiler",     test_inc_decompiler),
     ("custom_stamps",      test_custom_stamps),
     ("api_stamps",         test_api_stamps),
+    ("collision",          test_collision),
 ]
 
 

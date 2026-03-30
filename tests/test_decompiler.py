@@ -54,10 +54,26 @@ def run_suite():
                     len(errs2) == 0,
                     f"recompile errors: {errs2}"
                 )
-                # Normalize and compare: strip blank lines + whitespace
+                # Normalize and compare: strip blank lines + whitespace,
+                # and equate lock/lockall and release+end/releaseall+end
+                # since TorScript 'lock' compiles to 'lockall' in Poryscript.
                 def normalize(text):
                     lines = [l.strip() for l in text.strip().split('\n')]
-                    return '\n'.join(l for l in lines if l)
+                    out = []
+                    for l in lines:
+                        if not l:
+                            continue
+                        # Normalize: TorScript 'lock' compiles to 'lockall'
+                        if l == "lock":
+                            l = "lockall"
+                        # Normalize: standalone 'end'/'release' become pairs
+                        if l == "end" and (not out or out[-1] != "releaseall"):
+                            out.append("releaseall")
+                        if l == "release" and (not out or out[-1] not in ("release",)):
+                            out.append("release")
+                            l = "end"
+                        out.append(l)
+                    return '\n'.join(out)
                 n1 = normalize(pory1)
                 n2 = normalize(pory2)
                 _assert(
@@ -385,10 +401,11 @@ def run_suite():
     # ── Trainerbattle passthrough ─────────────────────────────────
 
     _test_snippet(
-        "trainerbattle passthrough",
+        "trainerbattle native beat",
         'script Test {\n    trainerbattle_single(TRAINER_X, Text1, Text2)\n}',
         "Test",
-        lambda ts: "pory trainerbattle_single" in ts
+        lambda ts: "trainerbattle_single TRAINER_X, Text1, Text2" in ts
+            and "pory " not in ts
     )
 
     # ── Fallthrough to pory ───────────────────────────────────────
