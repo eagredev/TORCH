@@ -6,7 +6,9 @@ registrations, and cross-references needed for a build-ready map.
 # TORCH_MODULE: Template Stamper
 # TORCH_GROUP: Editors
 import copy
+import json
 import os
+import shutil
 import subprocess
 
 from torch.building_templates import TEMPLATES, INDOOR_DEFAULTS
@@ -749,4 +751,266 @@ def _error_result(error_msg, created_files, modified_files,
         "maps_created": maps_created,
         "heal_location_id": None,
         "warnings": warnings,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Custom stamp support
+# ---------------------------------------------------------------------------
+
+def _deparameterize_events(events, map_name, map_const):
+    """Replace {map_name} and {MAP_CONST} placeholders in event data.
+
+    Deep-copies before modifying. Works on all string values in each event dict.
+    """
+    result = []
+    for evt in events:
+        evt = copy.deepcopy(evt)
+        for key, val in evt.items():
+            if isinstance(val, str):
+                val = val.replace("{map_name}", map_name)
+                val = val.replace("{MAP_CONST}", map_const)
+                evt[key] = val
+        result.append(evt)
+    return result
+
+
+def _create_unique_layout(game_path, map_name, stamp_manifest, stamp_dir):
+    """Create a unique layout for a custom-stamped map.
+
+    Creates layout directory, copies binaries from stamp, adds entry to
+    layouts.json. Returns layout name on success, error string on failure.
+    """
+    map_const = folder_to_map_const(map_name)
+    # Strip MAP_ prefix for LAYOUT_ id
+    const_suffix = map_const[4:] if map_const.startswith("MAP_") else map_const
+    layout_id = f"LAYOUT_{const_suffix}"
+    layout_name = f"{map_name}_Layout"
+    layout_path = os.path.join(game_path, "data", "layouts", map_name)
+
+    # Create layout directory
+    try:
+        os.makedirs(layout_path, exist_ok=True)
+    except OSError as e:
+        return f"Failed to create layout dir {map_name}: {e}"
+
+    # Copy binaries from stamp directory
+    for binfile in ("map.bin", "border.bin"):
+        src = os.path.join(stamp_dir, binfile)
+        dst = os.path.join(layout_path, binfile)
+        if os.path.isfile(src):
+            try:
+                shutil.copy2(src, dst)
+            except OSError as e:
+                return f"Failed to copy {binfile}: {e}"
+        else:
+            return f"Stamp missing {binfile}"
+
+    # Add entry to layouts.json
+    clear_project_cache()
+    layouts_data = load_layouts(game_path)
+    if not layouts_data:
+        return "Could not load layouts.json"
+
+    # Check for duplicates
+    if not _layout_exists(layouts_data, layout_id):
+        layouts_data.setdefault("layouts", []).append({
+            "id": layout_id,
+            "name": layout_name,
+            "width": stamp_manifest.get("width"),
+            "height": stamp_manifest.get("height"),
+            "primary_tileset": stamp_manifest.get("primary_tileset", ""),
+            "secondary_tileset": stamp_manifest.get("secondary_tileset", ""),
+            "border_filepath": f"data/layouts/{map_name}/border.bin",
+            "blockdata_filepath": f"data/layouts/{map_name}/map.bin",
+        })
+        if not write_layouts(game_path, layouts_data):
+            return "Failed to write layouts.json"
+
+    return layout_name
+
+
+def _build_map_json_from_stamp(map_name, layout_id, stamp_manifest,
+                               warps, objects, coord_events, bg_events,
+                               region_map_section):
+    """Build a complete map.json dict from stamp manifest data."""
+    data = dict(INDOOR_DEFAULTS)
+    data["id"] = folder_to_map_const(map_name)
+    data["name"] = map_name
+    data["layout"] = layout_id
+    data["music"] = stamp_manifest.get("music", "MUS_DUMMY")
+    data["region_map_section"] = region_map_section
+    data["object_events"] = objects
+    data["warp_events"] = warps
+    data["coord_events"] = coord_events
+    data["bg_events"] = bg_events
+    return data
+
+
+def validate_custom_stamp(game_path, stamp_id, parent_map,
+                          door_x, door_y, map_name=None):
+    """Dry-run validation for custom stamp placement.
+
+    Thin wrapper around custom_stamps.validate_stamp_placement() for API
+    consistency. Returns dict with valid, errors, warnings, suggested_name.
+    """
+    from torch.custom_stamps import validate_stamp_placement
+    return validate_stamp_placement(
+        game_path, stamp_id, parent_map, door_x, door_y,
+        map_name_override=map_name,
+    )
+
+
+def stamp_custom(game_path, stamp_id, parent_map, door_x, door_y,
+                 map_name=None, map_group=None):
+    """Stamp a custom user-created template onto the game.
+
+    Returns result dict with success, map_name, errors, warnings.
+    """
+    from torch.custom_stamps import load_stamp, validate_stamp_placement, STAMPS_DIR
+
+    errors = []
+    warnings = []
+    created_files = []
+    modified_files = []
+
+    # Step 1: Load stamp manifest
+    stamp = load_stamp(game_path, stamp_id)
+    if stamp is None:
+        return {"success": False, "map_name": "",
+                "errors": [f"Stamp '{stamp_id}' not found"],
+                "warnings": []}
+
+    stamp_dir = os.path.join(game_path, STAMPS_DIR, stamp_id)
+
+    # Step 2: Validate placement
+    validation = validate_stamp_placement(
+        game_path, stamp_id, parent_map, door_x, door_y,
+        map_name_override=map_name,
+    )
+    if not validation["valid"]:
+        return {"success": False, "map_name": "",
+                "errors": validation["errors"],
+                "warnings": validation["warnings"]}
+    warnings.extend(validation["warnings"])
+
+    # Determine final map name
+    final_name = map_name or validation["suggested_name"]
+    map_const = folder_to_map_const(final_name)
+    # Strip MAP_ prefix for the const portion used in placeholders
+    const_suffix = map_const[4:] if map_const.startswith("MAP_") else map_const
+
+    # Step 3: Validate parent map and load common data
+    clear_project_cache()
+    parent_data = load_map_json(game_path, parent_map)
+    if not parent_data:
+        return {"success": False, "map_name": final_name,
+                "errors": [f"Could not load map.json for '{parent_map}'"],
+                "warnings": warnings}
+
+    region_map_section = parent_data.get("region_map_section", "MAPSEC_NONE")
+    parent_warp_id = str(len(parent_data.get("warp_events", [])))
+
+    # Step 4: Create unique layout
+    layout_result = _create_unique_layout(
+        game_path, final_name, stamp, stamp_dir)
+    if not layout_result.endswith("_Layout"):
+        # It's an error string
+        return {"success": False, "map_name": final_name,
+                "errors": [layout_result], "warnings": warnings}
+    layout_name = layout_result
+    layout_id = f"LAYOUT_{const_suffix}"
+    created_files.append(f"data/layouts/{final_name}/map.bin")
+    created_files.append(f"data/layouts/{final_name}/border.bin")
+    modified_files.append("data/layouts/layouts.json")
+
+    # Step 5: Deparameterize events
+    objects = _deparameterize_events(
+        stamp.get("object_events", []), final_name, const_suffix)
+    all_warps = _deparameterize_events(
+        stamp.get("warp_events", []), final_name, const_suffix)
+    coord_events = _deparameterize_events(
+        stamp.get("coord_events", []), final_name, const_suffix)
+    bg_events = _deparameterize_events(
+        stamp.get("bg_events", []), final_name, const_suffix)
+
+    # Process warps: exit warps point to parent, others keep their values
+    for warp in all_warps:
+        role = warp.pop("role", None)
+        if role == "exit_warp":
+            warp["dest_map"] = folder_to_map_const(parent_map)
+            warp["dest_warp_id"] = parent_warp_id
+
+    # Step 6: Build map.json
+    map_json_data = _build_map_json_from_stamp(
+        final_name, layout_id, stamp, all_warps, objects,
+        coord_events, bg_events, region_map_section)
+
+    # Step 7: Generate scripts
+    script_template = stamp.get("script_template", "")
+    if script_template:
+        script_content = script_template.replace("{map_name}", final_name)
+        script_content = script_content.replace(
+            "{MAP_CONST}", const_suffix)
+    else:
+        script_content = f"mapscripts {final_name}_MapScripts {{}}\n"
+
+    # Create map folder
+    res = _create_map_folder(
+        game_path, final_name, map_json_data, script_content, created_files)
+    if res is not True:
+        return {"success": False, "map_name": final_name,
+                "errors": [res], "warnings": warnings}
+
+    # Step 8: Add warp to parent map
+    clear_project_cache()
+    parent_data_fresh = load_map_json(game_path, parent_map)
+    if not parent_data_fresh:
+        parent_data_fresh = parent_data
+
+    # Find first exit warp position for dest_warp_id
+    exit_warp_idx = "0"
+    for i, warp in enumerate(all_warps):
+        if warp.get("dest_map") == folder_to_map_const(parent_map):
+            exit_warp_idx = str(i)
+            break
+
+    parent_data_fresh.setdefault("warp_events", []).append({
+        "x": door_x,
+        "y": door_y,
+        "elevation": 0,
+        "dest_map": map_const,
+        "dest_warp_id": exit_warp_idx,
+    })
+    if not write_map_json(game_path, parent_map, parent_data_fresh):
+        return {"success": False, "map_name": final_name,
+                "errors": ["Failed to update parent map.json"],
+                "warnings": warnings}
+    modified_files.append(f"data/maps/{parent_map}/map.json")
+
+    # Step 9: Register in map groups
+    clear_project_cache()
+    groups_data = load_map_groups(game_path)
+    if groups_data:
+        _add_maps_to_group(
+            groups_data, [final_name], map_group, parent_map, warnings)
+        if not write_map_groups(game_path, groups_data):
+            warnings.append("Failed to write map_groups.json")
+        else:
+            modified_files.append("data/maps/map_groups.json")
+    else:
+        warnings.append("Could not load map_groups.json")
+
+    # Step 10: Register event_scripts.s include
+    if _register_event_scripts_include(game_path, final_name, warnings):
+        if "data/event_scripts.s" not in modified_files:
+            modified_files.append("data/event_scripts.s")
+
+    return {
+        "success": True,
+        "map_name": final_name,
+        "errors": [],
+        "warnings": warnings,
+        "created_files": created_files,
+        "modified_files": modified_files,
     }

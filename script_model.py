@@ -264,7 +264,31 @@ def _parse_beat_gotoif(tokens, stripped, lines, i, cast):
 def _parse_beat_battle(tokens, stripped, lines, i, cast):
     cmd = tokens[0]
     args_str = stripped[len(cmd):].strip()
-    return {"type": "battle", "data": {"battle_type": cmd, "args": args_str}}, i + 1
+    data = {"battle_type": cmd, "args": args_str}
+
+    # Check for expanded multi-line battle syntax:
+    #   trainerbattle_single TRAINER_X
+    #     intro "text$"
+    #     defeated "text$"
+    #     postbattle "text$"
+    # Look ahead for indented sub-fields
+    j = i + 1
+    while j < len(lines):
+        sub = lines[j].strip()
+        if not sub:
+            j += 1
+            continue
+        m = re.match(r'^(intro|defeated|postbattle)\s+"(.*)"$', sub)
+        if m:
+            field, text = m.group(1), m.group(2)
+            # Collect continuation lines (multi-line text)
+            continuation, j = _parse_continuation_lines(lines, j + 1)
+            if continuation:
+                text += continuation
+            data[field] = text
+        else:
+            break  # Not a sub-field — stop consuming
+    return {"type": "battle", "data": data}, j
 
 
 def _parse_beat_follower(tokens, stripped, lines, i, cast):
@@ -702,7 +726,14 @@ def _serialize_beat_flow(data, lines):
 
 
 def _serialize_beat_battle(data, lines):
-    lines.append(f"{data['battle_type']} {data['args']}")
+    # Expanded form: has inline intro/defeated/postbattle text fields
+    if any(k in data for k in ("intro", "defeated", "postbattle")):
+        lines.append(f"{data['battle_type']} {data['args']}")
+        for field in ("intro", "defeated", "postbattle"):
+            if field in data and data[field]:
+                lines.append(f'  {field} "{data[field]}"')
+    else:
+        lines.append(f"{data['battle_type']} {data['args']}")
 
 
 def _serialize_beat_text(data, lines):

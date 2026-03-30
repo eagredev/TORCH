@@ -319,6 +319,10 @@ def simulate_scene(parsed_script, initial_positions, setup_movements=None):
                 player["facing"] = facing_toward(
                     player["x"], player["y"], npc["x"], npc["y"])
 
+        # Show post-battle dialogue from expanded battle beat
+        if btype == "battle" and data.get("postbattle"):
+            dialogue = data["postbattle"]
+
         # Apply beat effects to state
         if btype == "move":
             for action in data.get("actions", []):

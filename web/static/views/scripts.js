@@ -11,6 +11,7 @@
 import { api, postApi } from "../app.js";
 import { esc, createModal } from "../utils.js";
 import { renderStudioNavbar } from "../studioNav.js";
+import { getMapFromHashOrContext } from "../viewContext.js";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -678,10 +679,8 @@ function _restoreScroll() {
 // ---------------------------------------------------------------------------
 
 export async function render(container) {
-  // Parse map name from URL
-  const hash = window.location.hash.slice(1) || "/scripts";
-  const parts = hash.split("/").filter(Boolean);
-  _selectedMap = parts[1] || "";
+  // Parse map name from URL hash or IDE view context
+  _selectedMap = getMapFromHashOrContext() || "";
 
   container.innerHTML = `
     <article class="scripts-root">

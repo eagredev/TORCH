@@ -123,9 +123,9 @@ connectGlobalSSE();
 
 // Route table: hash path -> view module loader
 const routes = {
-  "/":            () => import("./ide.js"),
+  "/":            () => import("./views/dashboard.js"),
   "/dashboard":   () => import("./views/dashboard.js"),
-  "/studio":      () => import("./views/studio.js"),
+  "/studio":      () => import("./ide.js"),
   "/dex":         () => import("./views/dex.js"),
   "/encounters":  () => import("./views/encounters.js"),
   "/trainers":    () => import("./views/trainers.js"),
@@ -146,8 +146,10 @@ const routes = {
   "/metatiles":   () => import("./views/metatiles.js"),
   "/tilesets":    () => import("./views/tilesets.js"),
   "/templates":   () => import("./views/templates.js"),
+  "/stamp-library": () => import("./views/stampLibrary.js"),
   "/npcs":        () => import("./views/npcs.js"),
   "/versions":    () => import("./views/versions.js"),
+  "/music":       () => import("./views/music.js"),
   "/ide":         () => import("./ide.js"),
 };
 
@@ -173,7 +175,7 @@ async function navigate() {
     "/encounters", "/trainers", "/scripts", "/flags", "/shops",
     "/heals", "/assets", "/explorer", "/items", "/moves", "/learnsets",
     "/visualizer", "/chains", "/metatiles", "/tilesets", "/templates",
-    "/npcs",
+    "/npcs", "/music", "/stamp-library",
   ]);
 
   // Update active nav link — handle both top-level and sub-nav
@@ -194,8 +196,8 @@ async function navigate() {
     currentCleanup = null;
   }
 
-  // IDE mode: hide nav/footer chrome for full-viewport layout
-  const isIDE = baseRoute === "/ide" || route === "/";
+  // IDE/Studio mode: hide nav/footer chrome for full-viewport layout
+  const isIDE = baseRoute === "/ide" || baseRoute === "/studio";
   const nav = document.querySelector("nav");
   const footer = document.querySelector("footer.status-bar");
   const dexPanel = document.getElementById("dex-panel");

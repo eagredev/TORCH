@@ -30,6 +30,56 @@ from torch.project_files import load_map_json, load_layouts
 
 
 # ---------------------------------------------------------------------------
+# Fieldmap constants cache
+# ---------------------------------------------------------------------------
+
+_fieldmap_cache = {}  # game_path -> (mtime, dict)
+
+
+def _read_fieldmap_constants(game_path):
+    """Read NUM_TILES_PER_METATILE and NUM_TILES_IN_PRIMARY from fieldmap.h.
+
+    Returns dict with keys 'tiles_per_metatile' and 'tiles_in_primary'.
+    Cached by file mtime.
+    """
+    fpath = os.path.join(game_path, "include", "fieldmap.h")
+    if not os.path.isfile(fpath):
+        return {}
+    try:
+        mtime = os.path.getmtime(fpath)
+    except OSError:
+        return {}
+
+    cached = _fieldmap_cache.get(game_path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    result = {}
+    try:
+        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "NUM_TILES_PER_METATILE" in line:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[1] == "NUM_TILES_PER_METATILE":
+                        try:
+                            result["tiles_per_metatile"] = int(parts[2])
+                        except ValueError:
+                            pass
+                elif "NUM_TILES_IN_PRIMARY" in line and "METATILES" not in line:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[1] == "NUM_TILES_IN_PRIMARY":
+                        try:
+                            result["tiles_in_primary"] = int(parts[2])
+                        except ValueError:
+                            pass
+    except OSError:
+        pass
+
+    _fieldmap_cache[game_path] = (mtime, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -201,7 +251,31 @@ def _read_fieldmap_constant(game_path, name, default):
     return default
 
 
-def _load_tileset_data(game_path, ts_const):
+def _merge_palettes(pri_data, sec_data, boundary=6):
+    """Build a merged 16-palette array matching GBA hardware behaviour.
+
+    Palette slots 0..(boundary-1) come from the primary tileset.
+    Palette slots boundary..15 come from the secondary tileset.
+    This is how the GBA loads tileset palettes — both primary and secondary
+    tiles share the same merged palette space.
+    """
+    # Start with 16 empty palettes (16 colors each)
+    merged = [[[0, 0, 0]] * 16 for _ in range(16)]
+
+    if pri_data:
+        pri_palettes = pri_data[3]
+        for i in range(min(boundary, len(pri_palettes))):
+            merged[i] = pri_palettes[i]
+
+    if sec_data:
+        sec_palettes = sec_data[3]
+        for i in range(boundary, min(16, len(sec_palettes))):
+            merged[i] = sec_palettes[i]
+
+    return merged
+
+
+def _load_tileset_data(game_path, ts_const, tiles_per_metatile=None):
     """Load pixel data, palettes, and metatile refs for a tileset.
 
     Returns (pixels, sheet_w, sheet_h, palettes, metatiles) or None on error.
@@ -243,7 +317,7 @@ def _load_tileset_data(game_path, ts_const):
     except OSError:
         return None
 
-    metatiles = _parse_metatile_bin(mt_data)
+    metatiles = _parse_metatile_bin(mt_data, tiles_per_metatile)
     return pixels, sheet_w, sheet_h, palettes, metatiles
 
 
@@ -410,15 +484,28 @@ def _render_map(game_path, map_name):
     if len(bd_data) < expected:
         return None, 0, 0
 
+    # Read metatile format from fieldmap.h
+    fm = _read_fieldmap_constants(game_path)
+    tiles_per_mt = fm.get("tiles_per_metatile")
+
     # Load primary tileset
     pri_const = layout.get("primary_tileset", "")
     sec_const = layout.get("secondary_tileset", "")
 
-    pri_data = _load_tileset_data(game_path, pri_const) if pri_const else None
-    sec_data = _load_tileset_data(game_path, sec_const) if sec_const else None
+    pri_data = _load_tileset_data(game_path, pri_const, tiles_per_mt) if pri_const else None
+    sec_data = _load_tileset_data(game_path, sec_const, tiles_per_mt) if sec_const else None
 
     if not pri_data and not sec_data:
         return None, 0, 0
+
+    # GBA palette merging: slots 0-5 from primary, 6-15 from secondary.
+    # Both tilesets need the merged palette so tiles routed to either
+    # tileset use the correct colours regardless of palette slot.
+    merged_palettes = _merge_palettes(pri_data, sec_data)
+    if pri_data:
+        pri_data = (pri_data[0], pri_data[1], pri_data[2], merged_palettes, pri_data[4])
+    if sec_data:
+        sec_data = (sec_data[0], sec_data[1], sec_data[2], merged_palettes, sec_data[4])
 
     num_metatiles_primary = _get_num_metatiles_primary(game_path)
     num_tiles_primary = _get_num_tiles_primary(game_path)
@@ -526,12 +613,20 @@ def _render_border(game_path, map_name, depth=3):
         return None, 0, 0, 0
 
     # Load tilesets
+    fm = _read_fieldmap_constants(game_path)
+    tiles_per_mt = fm.get("tiles_per_metatile")
     pri_const = layout.get("primary_tileset", "")
     sec_const = layout.get("secondary_tileset", "")
-    pri_data = _load_tileset_data(game_path, pri_const) if pri_const else None
-    sec_data = _load_tileset_data(game_path, sec_const) if sec_const else None
+    pri_data = _load_tileset_data(game_path, pri_const, tiles_per_mt) if pri_const else None
+    sec_data = _load_tileset_data(game_path, sec_const, tiles_per_mt) if sec_const else None
     if not pri_data and not sec_data:
         return None, 0, 0, 0
+
+    merged_palettes = _merge_palettes(pri_data, sec_data)
+    if pri_data:
+        pri_data = (pri_data[0], pri_data[1], pri_data[2], merged_palettes, pri_data[4])
+    if sec_data:
+        sec_data = (sec_data[0], sec_data[1], sec_data[2], merged_palettes, sec_data[4])
 
     num_metatiles_primary = _get_num_metatiles_primary(game_path)
     num_tiles_primary = _get_num_tiles_primary(game_path)
@@ -646,12 +741,20 @@ def _render_strip(game_path, map_name, strip, depth=3):
         return None, 0, 0
 
     # Load tilesets
+    fm = _read_fieldmap_constants(game_path)
+    tiles_per_mt = fm.get("tiles_per_metatile")
     pri_const = layout.get("primary_tileset", "")
     sec_const = layout.get("secondary_tileset", "")
-    pri_data = _load_tileset_data(game_path, pri_const) if pri_const else None
-    sec_data = _load_tileset_data(game_path, sec_const) if sec_const else None
+    pri_data = _load_tileset_data(game_path, pri_const, tiles_per_mt) if pri_const else None
+    sec_data = _load_tileset_data(game_path, sec_const, tiles_per_mt) if sec_const else None
     if not pri_data and not sec_data:
         return None, 0, 0
+
+    merged_palettes = _merge_palettes(pri_data, sec_data)
+    if pri_data:
+        pri_data = (pri_data[0], pri_data[1], pri_data[2], merged_palettes, pri_data[4])
+    if sec_data:
+        sec_data = (sec_data[0], sec_data[1], sec_data[2], merged_palettes, sec_data[4])
 
     num_metatiles_primary = _get_num_metatiles_primary(game_path)
     num_tiles_primary = _get_num_tiles_primary(game_path)

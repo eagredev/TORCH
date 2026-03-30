@@ -1007,15 +1007,78 @@ _TRAINERBATTLE_MACROS = {
 
 
 def _compile_trainerbattle(tokens, stripped, state, lines, i):
-    """Compile any trainerbattle_* macro — pass through to Poryscript."""
+    """Compile any trainerbattle_* macro.
+
+    Supports two forms:
+    1. Legacy single-line: trainerbattle_single TRAINER_X, IntroLabel, DefeatedLabel
+       → pass through to Poryscript as-is
+    2. Expanded multi-line with inline text:
+       trainerbattle_single TRAINER_X
+         intro "text$"
+         defeated "text$"
+         postbattle "text$"
+       → generate text labels, emit trainerbattle + msgbox
+    """
     macro = tokens[0]
     args = stripped[len(macro):].strip()
-    state.emit(f"{macro}({args})")
+
+    # Check for expanded form: look ahead for indented intro/defeated/postbattle
+    texts = {}
+    extra = 0
+    j = i + 1
+    while j < len(lines):
+        sub = lines[j].strip()
+        if not sub:
+            j += 1
+            extra += 1
+            continue
+        m = re.match(r'^(intro|defeated|postbattle)\s+"(.*)"$', sub)
+        if m:
+            field, text = m.group(1), m.group(2)
+            texts[field] = text
+            j += 1
+            extra += 1
+        else:
+            break
+
+    if texts:
+        # Expanded form — generate text labels and battle command
+        trainer_const = args.split(",")[0].strip() if args else macro
+        # Derive label base from trainer const (TRAINER_PETE → Pete)
+        label_base = trainer_const.replace("TRAINER_", "").title().replace("_", "")
+        prefix = state.label_prefix  # e.g. "Route103"
+
+        text_labels = []
+        for field in ("intro", "defeated"):
+            if field in texts:
+                lbl = f"{prefix}_Text_{label_base}{field.title()}"
+                t = texts[field]
+                if not t.endswith("$"):
+                    t += "$"
+                state.text_blocks.append((lbl, t))
+                text_labels.append(lbl)
+            else:
+                text_labels.append(f"{prefix}_Text_{label_base}{field.title()}")
+
+        # Emit trainerbattle with generated text labels
+        tb_args = f"{trainer_const}, {', '.join(text_labels)}"
+        state.emit(f"{macro}({tb_args})")
+
+        # Emit post-battle msgbox if provided
+        if "postbattle" in texts:
+            t = texts["postbattle"]
+            if not t.endswith("$"):
+                t += "$"
+            state.emit(f'msgbox("{t}", MSGBOX_AUTOCLOSE)')
+    else:
+        # Legacy single-line form — pass through
+        state.emit(f"{macro}({args})")
+
     # Battles destroy dynamically-spawned objects (including the camera object).
     # Clear the flag so a subsequent camera pan will re-spawn it.
     # Do NOT reset camera offsets — the position shift persists through battles.
     state.camera_spawned = False
-    return 0
+    return extra
 
 
 def _compile_follower(tokens, stripped, state, lines, i):

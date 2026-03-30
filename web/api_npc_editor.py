@@ -129,6 +129,60 @@ def _classify_script(content, label):
     return "complex"
 
 
+def _classify_inc_script(content, label):
+    """Classify an assembly (.inc) script block.
+
+    Returns same types as _classify_script: flavor/sign/custom/complex/nurse/pc.
+    """
+    # Extract the body between label:: and the next label or end of file
+    pat = rf'^{re.escape(label)}::?\s*$'
+    m = re.search(pat, content, re.MULTILINE)
+    if not m:
+        return "complex"
+
+    # Get lines until next label (line starting without whitespace ending with :)
+    rest = content[m.end():]
+    body_lines = []
+    for line in rest.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not line[0:1].isspace() and stripped.endswith(":"):
+            break  # next label
+        if not line[0:1].isspace() and "::" in stripped:
+            break  # next label
+        body_lines.append(stripped)
+
+    if not body_lines:
+        return "complex"
+
+    # Check patterns
+    body_text = " ".join(body_lines)
+
+    if "special ShowPokemonStorageSystem" in body_text:
+        return "pc"
+    if "special HealPlayerParty" in body_text or "HealPlayerTeam" in body_text:
+        return "nurse"
+    if "giveitem" in body_text.lower():
+        return "item_giver"
+
+    # Simple msgbox + end (with optional lock/faceplayer/release)
+    cmds = [l for l in body_lines if l not in ("lock", "faceplayer", "release",
+                                                "end", "return")]
+    msgbox_cmds = [c for c in cmds if c.startswith("msgbox ")]
+
+    if len(msgbox_cmds) == 1 and len(cmds) == 1:
+        if "MSGBOX_SIGN" in msgbox_cmds[0]:
+            return "sign"
+        if "MSGBOX_NPC" in msgbox_cmds[0]:
+            return "flavor"
+
+    if msgbox_cmds:
+        return "custom"
+
+    return "complex"
+
+
 # ---------------------------------------------------------------------------
 # Helpers — dialogue extraction
 # ---------------------------------------------------------------------------
@@ -304,7 +358,8 @@ def _build_cast_index(project_dir, map_name):
 # Helpers — NPC detail builder
 # ---------------------------------------------------------------------------
 
-_EDITABLE_TYPES = {"flavor", "sign", "item_giver", "complex", "custom"}
+_EDITABLE_TYPES = {"flavor", "sign", "item_giver", "complex", "custom", "none"}
+_DECOMPILABLE_TYPES = {"flavor", "sign", "item_giver", "custom", "complex"}
 
 
 def _build_npc_detail(game_path, map_name, npc_id, project_dir=None):
@@ -350,7 +405,7 @@ def _resolve_script_info(game_path, map_name, script_label):
 
     Returns (script_type, script_source, dialogue, dialogue_readable).
     """
-    if not script_label:
+    if not script_label or script_label in ("NULL", "0", "0x0"):
         return "none", None, None, None
 
     # Shared scripts
@@ -379,10 +434,11 @@ def _resolve_script_info(game_path, map_name, script_label):
         except OSError:
             return "inc", "scripts.inc", None, None
 
+        stype = _classify_inc_script(content, script_label)
         dlg = _extract_inc_dialogue(content, script_label)
         dialogue = dlg["text"] if dlg else None
         dialogue_readable = _game_text_to_readable(dialogue) if dialogue else None
-        return "inc", "scripts.inc", dialogue, dialogue_readable
+        return stype, "scripts.inc", dialogue, dialogue_readable
 
     return "unknown", None, None, None
 
@@ -475,6 +531,12 @@ def _assemble_npc_detail(obj, npc_id, gfx, script_label, script_type,
         "has_extra_logic": script_type in ("custom",),
         "is_trainer": is_trainer,
         "is_workspace_managed": is_ws,
+        "can_decompile": (
+            bool(script_label)
+            and script_source in ("scripts.pory", "scripts.inc")
+            and not is_ws
+            and script_type in _DECOMPILABLE_TYPES
+        ),
         "referenced_by": refs,
     }
 
@@ -568,7 +630,34 @@ def _validate_create_body(body):
     return None
 
 
-def _create_flavor(game_path, map_name, body):
+def _write_torscript_or_pory(game_path, map_name, pory_script, torscript, name,
+                             project_dir=None):
+    """Write script to workspace (.txt TorScript + sync) if enrolled, else raw pory.
+
+    Args:
+        game_path: Game project path
+        map_name: Map name
+        pory_script: Poryscript text (for non-enrolled fallback)
+        torscript: TorScript text (for workspace)
+        name: Short script name (e.g. "OldMan") for the .txt filename
+        project_dir: Project workspace dir (None = skip workspace check)
+    """
+    if project_dir:
+        from torch.registry import is_enrolled
+        if is_enrolled(project_dir, map_name):
+            ws_dir = os.path.join(project_dir, map_name)
+            os.makedirs(ws_dir, exist_ok=True)
+            out_path = os.path.join(ws_dir, f"{name}.txt")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(torscript + "\n")
+            _quiet_sync(project_dir, map_name, game_path)
+            return
+
+    # Fallback: write Poryscript directly to scripts.pory
+    _write_script_to_pory(game_path, map_name, pory_script)
+
+
+def _create_flavor(game_path, map_name, body, project_dir=None):
     """Create a flavor NPC (object_event + script)."""
     safe_name = _sanitize_label_name(body["name"])
     if not safe_name:
@@ -576,8 +665,11 @@ def _create_flavor(game_path, map_name, body):
     label = f"{map_name}_EventScript_{safe_name}"
     text = body["dialogue"].rstrip("$") + "$"
 
-    script = _generate_flavor_npc(map_name, label, text)
-    _write_script_to_pory(game_path, map_name, script)
+    pory_script = _generate_flavor_npc(map_name, label, text)
+    # TorScript equivalent for workspace
+    torscript = f'script {label}\nlock\nfaceplayer\nmsgnpc "{text}"\nrelease\nend'
+    _write_torscript_or_pory(game_path, map_name, pory_script, torscript, safe_name,
+                             project_dir=project_dir)
 
     obj_data = _build_object_data(body, label)
     new_idx = _add_object_event(game_path, map_name, obj_data)
@@ -592,7 +684,7 @@ def _create_flavor(game_path, map_name, body):
     })
 
 
-def _create_sign(game_path, map_name, body):
+def _create_sign(game_path, map_name, body, project_dir=None):
     """Create a sign (bg_event + script)."""
     safe_name = _sanitize_label_name(body["name"])
     if not safe_name:
@@ -600,8 +692,10 @@ def _create_sign(game_path, map_name, body):
     label = f"{map_name}_EventScript_{safe_name}"
     text = body["dialogue"].rstrip("$") + "$"
 
-    script = _generate_sign(map_name, label, text)
-    _write_script_to_pory(game_path, map_name, script)
+    pory_script = _generate_sign(map_name, label, text)
+    torscript = f'script {label}\nmsg "{text}"\nend'
+    _write_torscript_or_pory(game_path, map_name, pory_script, torscript, safe_name,
+                             project_dir=project_dir)
 
     bg_data = {
         "type": "sign",
@@ -622,7 +716,7 @@ def _create_sign(game_path, map_name, body):
     })
 
 
-def _create_item_giver(game_path, map_name, body):
+def _create_item_giver(game_path, map_name, body, project_dir=None):
     """Create an item giver NPC (object_event + script)."""
     safe_name = _sanitize_label_name(body["name"])
     if not safe_name:
@@ -631,10 +725,20 @@ def _create_item_giver(game_path, map_name, body):
     text_before = body["before_text"].rstrip("$") + "$"
     text_after = body["after_text"].rstrip("$") + "$"
 
-    script = _generate_item_giver(
+    pory_script = _generate_item_giver(
         map_name, label, body["item"], body["flag"], text_before, text_after
     )
-    _write_script_to_pory(game_path, map_name, script)
+    torscript = (
+        f'script {label}\nlock\nfaceplayer\n'
+        f'gotoif flag {body["flag"]} {label}_Already\n'
+        f'msgnpc "{text_before}"\n'
+        f'give {body["item"]} 1\n'
+        f'flag set {body["flag"]}\nrelease\nend\n\n'
+        f'script {label}_Already\n'
+        f'msgnpc "{text_after}"\nrelease\nend'
+    )
+    _write_torscript_or_pory(game_path, map_name, pory_script, torscript, safe_name,
+                             project_dir=project_dir)
 
     obj_data = _build_object_data(body, label)
     new_idx = _add_object_event(game_path, map_name, obj_data)
@@ -1000,6 +1104,12 @@ def handle_npc_create(handler, match, query_params):
         return error_response(f"Unknown NPC type: {body['type']}", 400)
 
     clear_project_cache()
+    project_dir = getattr(handler.server, "project_dir", "")
+    # Pass project_dir for workspace-aware creation (creators that accept it)
+    import inspect
+    params = inspect.signature(creator).parameters
+    if "project_dir" in params:
+        return creator(game_path, map_name, body, project_dir=project_dir)
     return creator(game_path, map_name, body)
 
 
@@ -1026,9 +1136,174 @@ def handle_npc_dialogue(handler, match, query_params):
 
     new_msgbox_type = body.get("msgbox_type")
 
+    project_dir = getattr(handler.server, "project_dir", "")
+
+    # Try workspace-first update for managed scripts
+    if project_dir:
+        ws_result = _try_workspace_dialogue_update(
+            project_dir, game_path, map_name, npc_id, text, new_msgbox_type
+        )
+        if ws_result is not None:
+            return ws_result
+
+        # For NULL/new scripts on enrolled maps, create workspace .txt directly
+        from torch.registry import is_enrolled
+        if is_enrolled(project_dir, map_name):
+            return _create_workspace_dialogue(
+                project_dir, game_path, map_name, npc_id, text, new_msgbox_type
+            )
+
     return _apply_dialogue_update(
         game_path, map_name, npc_id, text, new_msgbox_type
     )
+
+
+def _try_workspace_dialogue_update(project_dir, game_path, map_name, npc_id,
+                                   text, new_msgbox_type):
+    """Try to update dialogue in a workspace .txt file. Returns response or None."""
+    data = load_map_json(game_path, map_name)
+    if not data:
+        return None
+
+    events = data.get("object_events", [])
+    idx = npc_id - 1
+    if idx < 0 or idx >= len(events):
+        return None
+
+    script_label = events[idx].get("script", "")
+    if not script_label:
+        return None
+
+    # Check if this script is in a workspace .txt file
+    ws_dir = os.path.join(project_dir, map_name)
+    if not os.path.isdir(ws_dir):
+        return None
+
+    target_file = None
+    for fname in os.listdir(ws_dir):
+        if not fname.endswith(".txt"):
+            continue
+        fpath = os.path.join(ws_dir, fname)
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                content = f.read()
+            if f"script {script_label}" in content:
+                target_file = fpath
+                break
+        except OSError:
+            continue
+
+    if not target_file:
+        return None
+
+    # Found the workspace file — update msg/msgnpc line
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+
+    # Ensure text ends with $
+    if not text.endswith("$"):
+        text = text + "$"
+
+    updated = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("msgnpc ") or stripped.startswith('msgnpc "'):
+            indent = line[:len(line) - len(line.lstrip())]
+            lines[i] = f'{indent}msgnpc "{text}"\n'
+            updated = True
+            break
+        if stripped.startswith("msg ") or stripped.startswith('msg "'):
+            indent = line[:len(line) - len(line.lstrip())]
+            cmd = "msg"
+            if new_msgbox_type == "MSGBOX_NPC":
+                cmd = "msgnpc"
+            lines[i] = f'{indent}{cmd} "{text}"\n'
+            updated = True
+            break
+
+    if not updated:
+        return None
+
+    try:
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except OSError as e:
+        return error_response(f"Failed to write workspace file: {e}", 500)
+
+    # Sync to scripts.pory
+    _quiet_sync(project_dir, map_name, game_path)
+    clear_project_cache()
+
+    return ok_response({
+        "updated": True,
+        "label": script_label,
+        "workspace_file": os.path.basename(target_file),
+    })
+
+
+def _create_workspace_dialogue(project_dir, game_path, map_name, npc_id,
+                               text, new_msgbox_type):
+    """Create a new script in workspace for an NPC that has no script (NULL).
+
+    Generates label, writes .txt, updates map.json, syncs.
+    """
+    data = load_map_json(game_path, map_name)
+    if not data:
+        return error_response(f"Map not found: {map_name}", 404)
+
+    events = data.get("object_events", [])
+    idx = npc_id - 1
+    if idx < 0 or idx >= len(events):
+        return error_response(f"NPC #{npc_id} not found", 404)
+
+    # Generate label from NPC graphics or position
+    obj = events[idx]
+    gfx = obj.get("graphics_id", "")
+    short = _const_to_human_name(gfx, "OBJ_EVENT_GFX_").replace(" ", "")
+    if not short:
+        short = f"Npc{npc_id}"
+    label = f"{map_name}_EventScript_{short}"
+
+    # Ensure unique label
+    counter = 1
+    base_label = label
+    while any(e.get("script") == label for e in events if e is not obj):
+        label = f"{base_label}{counter}"
+        counter += 1
+        short = f"{short}{counter - 1}"
+
+    # Ensure text ends with $
+    if not text.endswith("$"):
+        text = text + "$"
+
+    # Determine command
+    cmd = "msgnpc" if (new_msgbox_type or "MSGBOX_NPC") == "MSGBOX_NPC" else "msg"
+
+    # Write workspace .txt
+    torscript = f"script {label}\nlock\nfaceplayer\n{cmd} \"{text}\"\nrelease\nend"
+    ws_dir = os.path.join(project_dir, map_name)
+    os.makedirs(ws_dir, exist_ok=True)
+    out_path = os.path.join(ws_dir, f"{short}.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(torscript + "\n")
+
+    # Update map.json with the new label
+    events[idx]["script"] = label
+    _write_map_json(game_path, map_name, data)
+
+    # Sync
+    _quiet_sync(project_dir, map_name, game_path)
+    clear_project_cache()
+
+    return ok_response({
+        "updated": True,
+        "label": label,
+        "created": True,
+        "workspace_file": f"{short}.txt",
+    })
 
 
 def _apply_dialogue_update(game_path, map_name, npc_id, text, new_msgbox_type):
@@ -1366,3 +1641,539 @@ def handle_npc_delete(handler, match, query_params):
         "deleted_graphics_id": deleted_gfx,
         "deleted_script": deleted_script,
     })
+
+
+# ---------------------------------------------------------------------------
+# Decompile — single NPC script to workspace
+# ---------------------------------------------------------------------------
+
+def _inject_aliases_from_localids(ts_text, inc_content, script_label, game_path, map_name):
+    """Add alias directives for LOCALID references used in the script.
+
+    Scans the original .inc for LOCALID_ references in the script body,
+    resolves them to NPC indices via map.json local_id fields, and prepends
+    alias lines to the TorScript output.
+    """
+    import re
+    from torch.project_files import load_map_json
+
+    # Find LOCALIDs referenced in the script block's .inc body
+    body_match = re.search(
+        rf'^{re.escape(script_label)}::(.+?)(?=^\w+::|\Z)',
+        inc_content, re.MULTILINE | re.DOTALL)
+    if not body_match:
+        return ts_text
+
+    body = body_match.group(1)
+    localids = set(re.findall(r'LOCALID_\w+', body))
+    # Also check for LOCALID_PLAYER which isn't a real NPC
+    localids.discard("LOCALID_PLAYER")
+    if not localids:
+        return ts_text
+
+    # Look up each LOCALID in map.json's object_events
+    data = load_map_json(game_path, map_name)
+    if not data:
+        return ts_text
+
+    alias_lines = []
+    for i, obj in enumerate(data.get("object_events", [])):
+        lid = obj.get("local_id", "")
+        if lid in localids:
+            alias_name = lid[len("LOCALID_"):].lower()
+            npc_num = i + 1
+            alias_lines.append(f"alias {alias_name} npc{npc_num}")
+            localids.discard(lid)
+
+    if not alias_lines:
+        return ts_text
+
+    # Prepend aliases before the script directive
+    alias_block = "\n".join(sorted(alias_lines)) + "\n\n"
+
+    # Insert before the first "script" line
+    m = re.match(r'^(script\s+)', ts_text)
+    if m:
+        return alias_block + ts_text
+    return alias_block + ts_text
+
+
+def _strip_script_prefix(label, map_name):
+    """Strip MapName_EventScript_ prefix from a label to get a short name."""
+    prefix = f"{map_name}_EventScript_"
+    if label.startswith(prefix):
+        return label[len(prefix):]
+    prefix2 = f"{map_name}_"
+    if label.startswith(prefix2):
+        return label[len(prefix2):]
+    return label
+
+
+def _decompile_inc_to_torscript(content, script_label):
+    """Convert a simple .inc assembly script to TorScript.
+
+    Handles: msgbox LABEL, TYPE + end patterns.
+    Returns (torscript_text, warnings) or (None, [error]).
+    """
+    # Extract body
+    pat = rf'^{re.escape(script_label)}::?\s*$'
+    m = re.search(pat, content, re.MULTILINE)
+    if not m:
+        return None, [f"Label '{script_label}' not found in .inc"]
+
+    rest = content[m.end():]
+    body_lines = []
+    for line in rest.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not line[0:1].isspace() and (stripped.endswith(":") or "::" in stripped):
+            break
+        body_lines.append(stripped)
+
+    if not body_lines:
+        return None, ["Empty script body"]
+
+    # Parse msgbox commands and resolve text labels
+    ts_lines = [f"script {script_label}"]
+    warnings = []
+    has_lock = "lock" in body_lines
+    has_faceplayer = "faceplayer" in body_lines
+
+    if has_lock:
+        ts_lines.append("lock")
+    if has_faceplayer:
+        ts_lines.append("faceplayer")
+
+    for line in body_lines:
+        if line in ("lock", "faceplayer", "release", "end", "return"):
+            continue
+
+        # msgbox TEXT_LABEL, MSGBOX_TYPE
+        msg_m = re.match(r'^msgbox\s+(\w+),\s*(MSGBOX_\w+)$', line)
+        if msg_m:
+            text_label = msg_m.group(1)
+            msgbox_type = msg_m.group(2)
+            # Resolve text from .string blocks
+            text = _resolve_inc_text(content, text_label)
+            if text:
+                cmd = "msgnpc" if msgbox_type == "MSGBOX_NPC" else "msg"
+                ts_lines.append(f'{cmd} "{text}"')
+            else:
+                warnings.append(f"Could not resolve text label: {text_label}")
+                ts_lines.append(f"pory msgbox({text_label}, {msgbox_type})")
+            continue
+
+        # trainerbattle
+        tb_m = re.match(r'^trainerbattle_(\w+)\s+(.+)$', line)
+        if tb_m:
+            ts_lines.append(f"trainerbattle_{tb_m.group(1)} {tb_m.group(2)}")
+            continue
+
+        # Unknown → pory passthrough
+        warnings.append(f"Unknown .inc command: {line}")
+        ts_lines.append(f"pory {line}")
+
+    if "release" in body_lines:
+        ts_lines.append("release")
+    ts_lines.append("end")
+
+    return "\n".join(ts_lines), warnings
+
+
+def _expand_battle_beats(ts_text):
+    """Post-process TorScript to expand battle beats into multi-line form.
+
+    Detects the pattern:
+      trainerbattle_single TRAINER_X, "intro$", "defeated$"
+      msg "postbattle$"
+      end
+
+    And collapses to:
+      trainerbattle_single TRAINER_X
+        intro "intro$"
+        defeated "defeated$"
+        postbattle "postbattle$"
+      end
+    """
+    lines = ts_text.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Match trainerbattle_* with quoted text args
+        m = re.match(
+            r'^(trainerbattle_\w+)\s+(TRAINER_\w+),\s*"(.+?)",\s*"(.+?)"(.*)$',
+            stripped)
+        if m:
+            macro = m.group(1)
+            trainer = m.group(2)
+            intro_text = m.group(3)
+            defeated_text = m.group(4)
+            remaining = m.group(5).strip()  # extra args like callback labels
+
+            # Look ahead for msg "postbattle" on next non-blank line
+            postbattle_text = None
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines):
+                msg_m = re.match(r'^msg\w*\s+"(.+)"$', lines[j].strip())
+                if msg_m:
+                    postbattle_text = msg_m.group(1)
+                    j += 1  # consume the msg line
+
+            # Build expanded format
+            if remaining:
+                result.append(f"{macro} {trainer}, {remaining}")
+            else:
+                result.append(f"{macro} {trainer}")
+            result.append(f'  intro "{intro_text}"')
+            result.append(f'  defeated "{defeated_text}"')
+            if postbattle_text:
+                result.append(f'  postbattle "{postbattle_text}"')
+            i = j
+            continue
+
+        result.append(line)
+        i += 1
+
+    return "\n".join(result)
+
+
+def _resolve_external_text_labels(pory_text, game_path, map_name):
+    """Resolve text label references in .pory output using external text files.
+
+    Trainer text is typically defined in data/text/trainers.inc, not in the
+    map's scripts.inc.  This function finds unresolved msgbox(LABEL, TYPE)
+    patterns and inlines the actual text.
+    """
+    # Collect candidate text files
+    text_files = []
+    trainers_inc = os.path.join(game_path, "data", "text", "trainers.inc")
+    if os.path.isfile(trainers_inc):
+        text_files.append(trainers_inc)
+    # Also check the map's own scripts.inc for any missed text
+    scripts_inc = os.path.join(game_path, "data", "maps", map_name, "scripts.inc")
+    if os.path.isfile(scripts_inc):
+        text_files.append(scripts_inc)
+
+    if not text_files:
+        return pory_text
+
+    # Cache loaded content
+    text_content = {}
+    for tf in text_files:
+        try:
+            with open(tf, "r", encoding="utf-8") as f:
+                text_content[tf] = f.read()
+        except OSError:
+            pass
+
+    def _try_resolve(label):
+        for content in text_content.values():
+            result = _resolve_inc_text(content, label)
+            if result is not None:
+                return result
+        return None
+
+    lines = pory_text.split("\n")
+    resolved = []
+    for line in lines:
+        # Match trainerbattle_*(TRAINER, IntroLabel, DefeatedLabel, ...) — resolve text labels
+        tb_m = re.match(r'^(\s*)(trainerbattle_\w+)\((.+)\)$', line)
+        if tb_m:
+            indent, macro, tb_args = tb_m.group(1), tb_m.group(2), tb_m.group(3)
+            parts = [p.strip() for p in tb_args.split(",")]
+            new_parts = []
+            for p in parts:
+                if re.match(r'^[A-Za-z_]\w*$', p) and not p.startswith("TRAINER_") and not p.startswith("TRUE") and not p.startswith("FALSE"):
+                    text = _try_resolve(p)
+                    if text is not None:
+                        new_parts.append(f'"{text}"')
+                        continue
+                new_parts.append(p)
+            resolved.append(f'{indent}{macro}({", ".join(new_parts)})')
+            continue
+
+        # Match msgbox(LABEL, TYPE) where LABEL is not quoted
+        m = re.match(r'^(\s*)msgbox\(([A-Za-z_]\w*),\s*(\w+)\)$', line)
+        if m:
+            indent, label, msg_type = m.group(1), m.group(2), m.group(3)
+            text = _try_resolve(label)
+            if text is not None:
+                resolved.append(f'{indent}msgbox("{text}", {msg_type})')
+                continue
+        resolved.append(line)
+    return "\n".join(resolved)
+
+
+def _resolve_inc_text(content, text_label):
+    """Resolve a text label to its .string content from .inc file."""
+    pat = rf'^{re.escape(text_label)}:\s*$'
+    m = re.search(pat, content, re.MULTILINE)
+    if not m:
+        return None
+
+    strings = []
+    for line in content[m.end():].split("\n"):
+        stripped = line.strip()
+        if stripped.startswith(".string "):
+            # Extract quoted text
+            str_m = re.match(r'^\.string\s+"(.*)"$', stripped)
+            if str_m:
+                strings.append(str_m.group(1))
+        elif stripped and not stripped.startswith("."):
+            break  # Next label or directive
+        elif not stripped:
+            continue
+
+    return "".join(strings) if strings else None
+
+
+def _decompile_script_to_workspace(game_path, map_name, script_label, project_dir,
+                                   overwrite=False):
+    """Decompile a single script to a workspace .txt file.
+
+    Handles both .pory (via decompiler) and .inc (via inc_decompiler pipeline).
+    When *overwrite* is True, always re-decompile even if a workspace file
+    already exists (used for auto-refresh on preview access).
+    Returns (script_name, torscript_text, warnings) on success.
+    Raises ValueError on failure.
+    """
+    filepath, file_type = _find_script(game_path, map_name, script_label)
+    if not filepath:
+        raise ValueError(f"Script '{script_label}' not found in game files")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        file_content = f.read()
+
+    if file_type == "pory":
+        stype = _classify_script(file_content, script_label)
+    elif file_type == "inc":
+        stype = _classify_inc_script(file_content, script_label)
+    else:
+        raise ValueError(f"Unsupported script format: {file_type}")
+
+    if stype in ("nurse", "pc"):
+        raise ValueError(f"System script ({stype}) — cannot be decompiled to workspace")
+    if stype == "shared":
+        raise ValueError("Shared/common script — cannot be decompiled to workspace")
+
+    # Decompile based on format
+    if file_type == "pory":
+        from torch.decompiler import decompile_block
+        ts_text, warnings = decompile_block(file_content, script_label, map_name)
+    else:
+        # .inc → .pory → TorScript (full pipeline)
+        try:
+            from torch.inc_decompiler import decompile_inc_block
+            from torch.decompiler import decompile
+            pory_text, inc_warnings = decompile_inc_block(file_content, script_label, map_name)
+            if pory_text:
+                # Resolve external text labels (e.g. trainer text in data/text/trainers.inc)
+                pory_text = _resolve_external_text_labels(pory_text, game_path, map_name)
+                ts_text, pory_warnings = decompile(pory_text, map_name)
+                warnings = inc_warnings + pory_warnings
+            else:
+                ts_text = None
+                warnings = inc_warnings
+        except Exception:
+            # Fallback to legacy pattern matcher
+            ts_text, warnings = _decompile_inc_to_torscript(file_content, script_label)
+
+    if ts_text is None:
+        raise ValueError(warnings[0] if warnings else "Decompilation failed")
+
+    # Expand battle beats: collapse trainerbattle + msg + end into multi-line form
+    ts_text = _expand_battle_beats(ts_text)
+
+    # Inject alias directives for LOCALID references found in the script.
+    # The decompiler converts LOCALID_X to actor name "x" but doesn't emit
+    # alias lines because it doesn't know the NPC index.  Look up in map.json.
+    ts_text = _inject_aliases_from_localids(
+        ts_text, file_content, script_label, game_path, map_name)
+
+    # Determine output filename
+    short_name = _strip_script_prefix(script_label, map_name)
+    ws_dir = os.path.join(project_dir, map_name)
+    os.makedirs(ws_dir, exist_ok=True)
+
+    out_path = os.path.join(ws_dir, f"{short_name}.txt")
+    if not overwrite and os.path.exists(out_path):
+        # Don't overwrite user-edited files — skip with current content
+        return short_name, ts_text, warnings
+
+    # Write with warning header if applicable
+    header = ""
+    if warnings:
+        header = "".join(f"# WARNING: {w}\n" for w in warnings) + "\n"
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(header + ts_text + "\n")
+
+    return short_name, ts_text, warnings
+
+
+@api_route("POST", r"/api/npcs/(?P<map_name>[A-Za-z0-9_]+)/(?P<npc_id>\d+)/decompile")
+def handle_npc_decompile(handler, match, query_params):
+    """Decompile a single NPC's script to the workspace."""
+    game_path = getattr(handler.server, "game_path", "")
+    project_dir = getattr(handler.server, "project_dir", "")
+    if not game_path or not project_dir:
+        return error_response("Game/project path not configured", 500)
+
+    map_name = match.group("map_name")
+    npc_id = int(match.group("npc_id"))
+
+    data = load_map_json(game_path, map_name)
+    if not data:
+        return error_response(f"Map not found: {map_name}", 404)
+
+    events = data.get("object_events", [])
+    idx = npc_id - 1
+    if idx < 0 or idx >= len(events):
+        return error_response(f"NPC #{npc_id} not found", 404)
+
+    script_label = events[idx].get("script", "")
+    if not script_label or script_label.startswith("Common_EventScript_"):
+        return error_response("No decompilable script on this NPC", 400)
+
+    try:
+        script_name, ts_text, warnings = _decompile_script_to_workspace(
+            game_path, map_name, script_label, project_dir,
+        )
+    except ValueError as e:
+        return error_response(str(e), 400)
+
+    # Auto-sync so scripts.pory gets REGION markers
+    sync_ok = _quiet_sync(project_dir, map_name, game_path)
+
+    clear_project_cache()
+    return ok_response({
+        "script_name": script_name,
+        "torscript": ts_text,
+        "warnings": warnings,
+        "synced": sync_ok,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Decompile — all scripts on a map
+# ---------------------------------------------------------------------------
+
+@api_route("POST", r"/api/npcs/(?P<map_name>[A-Za-z0-9_]+)/decompile-all")
+def handle_npc_decompile_all(handler, match, query_params):
+    """Decompile all eligible scripts on a map to the workspace."""
+    game_path = getattr(handler.server, "game_path", "")
+    project_dir = getattr(handler.server, "project_dir", "")
+    if not game_path or not project_dir:
+        return error_response("Game/project path not configured", 500)
+
+    map_name = match.group("map_name")
+
+    data = load_map_json(game_path, map_name)
+    if not data:
+        return error_response(f"Map not found: {map_name}", 404)
+
+    # Ensure enrolled
+    from torch.registry import enroll_map
+    enroll_map(project_dir, map_name)
+
+    # Collect unique script labels from object_events + bg_events
+    labels = set()
+    for obj in data.get("object_events", []):
+        lbl = obj.get("script", "")
+        if lbl and not lbl.startswith("Common_EventScript_"):
+            labels.add(lbl)
+    for bg in data.get("bg_events", []):
+        lbl = bg.get("script", "")
+        if lbl and not lbl.startswith("Common_EventScript_"):
+            labels.add(lbl)
+
+    imported = []
+    skipped = []
+    all_warnings = []
+
+    for lbl in sorted(labels):
+        try:
+            script_name, _, warnings = _decompile_script_to_workspace(
+                game_path, map_name, lbl, project_dir,
+            )
+            imported.append(script_name)
+            all_warnings.extend(warnings)
+        except ValueError as e:
+            skipped.append({"label": lbl, "reason": str(e)})
+
+    # Also decompile mapscripts to setup.pory if not already present
+    ms_result = _decompile_mapscripts(game_path, map_name, project_dir)
+
+    # Auto-sync
+    sync_ok = _quiet_sync(project_dir, map_name, game_path)
+
+    clear_project_cache()
+    return ok_response({
+        "imported": imported,
+        "skipped": skipped,
+        "mapscripts": ms_result,
+        "warnings": all_warnings,
+        "synced": sync_ok,
+    })
+
+
+def _decompile_mapscripts(game_path, map_name, project_dir):
+    """Extract mapscripts block from scripts.pory and write to setup.pory."""
+    pory_path = os.path.join(game_path, "data", "maps", map_name, "scripts.pory")
+    if not os.path.isfile(pory_path):
+        return None
+
+    try:
+        with open(pory_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        return None
+
+    # Find mapscripts block
+    m = re.search(r'mapscripts\s+(\w+)\s*\{', content)
+    if not m:
+        return None
+
+    ws_dir = os.path.join(project_dir, map_name)
+    setup_path = os.path.join(ws_dir, "setup.pory")
+
+    # Don't overwrite existing setup.pory
+    if os.path.exists(setup_path):
+        return "exists"
+
+    os.makedirs(ws_dir, exist_ok=True)
+
+    # Extract from 'mapscripts' to matching '}'
+    body = _extract_brace_block(content, m.start())
+    if body is None:
+        return None
+
+    label = m.group(1)
+    with open(setup_path, "w", encoding="utf-8") as f:
+        f.write(f"mapscripts {label} {{\n")
+        if body.strip():
+            for line in body.strip().split("\n"):
+                f.write(f"    {line.strip()}\n")
+        f.write("}\n")
+
+    return "created"
+
+
+def _quiet_sync(project_dir, map_name, game_path):
+    """Run a quiet sync from the web API (no TUI prompts)."""
+    try:
+        from torch.sync import sync_map
+        from torch.web.api import _derive_sync_params
+        emotes_conf, source_display = _derive_sync_params(project_dir)
+        sync_map(map_name, project_dir, game_path,
+                 emotes_conf, source_display,
+                 quiet=True, skip_snapshot=True)
+        return True
+    except Exception:
+        return False

@@ -148,15 +148,8 @@ function _buildHTML() {
           </span>`;
       }
       // Single tile: no slider, player is just placed there
-    } else {
-      // Trainer sight range slider
-      distSlider = `
-        <span class="viz-distance-wrap" title="Player trigger distance (tiles from ${ti.alias})">
-          <label class="viz-distance-label">${ti.alias} range:</label>
-          <input type="range" class="viz-distance-slider" min="${ti.min_distance}" max="${ti.max_distance}" value="${currentDist}">
-          <span class="viz-distance-val">${currentDist}</span>
-        </span>`;
     }
+    // Trainer sight range is controlled via Starting Position in the context panel, not here
   }
 
   const chainUI = _buildChainUI();
@@ -258,13 +251,8 @@ function _onFramesUpdated() {
   // The user must press Play manually to start advancing.
   _stopPlaying();
 
-  _updateCounter();
-  // Rebuild transport if trigger info appeared/disappeared
-  const ti = state.triggerInfo;
-  const shouldHaveSlider = ti && !(ti.type === "coord_event" && (ti.tiles || []).length <= 1);
-  if (!!shouldHaveSlider !== _hasSlider) {
-    _rebuild();
-  }
+  // Always rebuild — script may have changed (different NPC, different trigger).
+  _rebuild();
 }
 
 function _rebuild() {
@@ -356,6 +344,7 @@ function _wireSlider() {
     };
     dirWrap.addEventListener("click", _dirBtnHandler);
   }
+
 }
 
 function _unwireSlider() {

@@ -489,6 +489,8 @@ def _handle_single_line(line, state):
 
     if line == "lockall":
         return "lock"
+    if line == "lock":
+        return "lock"
     if line == "faceplayer":
         return "faceplayer"
     if line == "closemessage":
@@ -497,6 +499,16 @@ def _handle_single_line(line, state):
         return "waitstate"
     if line == "return":
         return "return"
+    if line == "end":
+        return "end"
+    if line == "release":
+        return "release"
+    if line == "releaseall":
+        return "end"
+    if line == "waitmessage":
+        return "pory waitmessage"
+    if line == "waitbuttonpress":
+        return "pory waitbuttonpress"
 
     # msgbox
     parsed = _parse_msgbox(line)
@@ -589,9 +601,15 @@ def _handle_single_line(line, state):
     if m:
         return f"call {m.group(1)}"
 
-    # trainerbattle_* — pass-through
+    # trainerbattle_* — native TorScript battle beat
+    # TorScript script_model.py already parses trainerbattle_* as a battle beat,
+    # and compiler.py passes them through to Poryscript.  Strip parens to match
+    # the TorScript syntax: trainerbattle_single TRAINER_ID, IntroLabel, DefeatLabel
+    m = re.match(r'^(trainerbattle_\w+)\((.+)\)$', line)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
     if line.startswith("trainerbattle_"):
-        return f"pory {line}"
+        return line  # already in TorScript form (no parens)
 
     # Follower commands
     m = re.match(r'^setfollowernpc\((\w+),\s*(\w+),\s*(\w+),\s*(\w+)\)$', line)
@@ -762,6 +780,31 @@ def decompile(pory_text, map_name=""):
         state.script_blocks_decompiled.append((label, ts_lines))
 
     # Assemble output
+    output = _assemble_output(state)
+    return output, state.warnings
+
+
+def decompile_block(pory_text, label, map_name=""):
+    """Decompile a single script block (+ its text/movement deps) from a .pory file.
+
+    Returns (torscript_text, warnings) or (None, ["label not found"]) if the label
+    doesn't exist in the file.
+    """
+    state = DecompilerState(map_name)
+    _parse_pory_structure(pory_text, state)
+
+    # Filter to only the requested script label
+    target = [(lbl, body) for lbl, body in state.script_blocks_raw if lbl == label]
+    if not target:
+        return None, [f"Script label '{label}' not found in source"]
+
+    state.script_blocks_raw = target
+
+    # Decompile the single block (text/movement blocks are still available for ref)
+    for lbl, body in state.script_blocks_raw:
+        ts_lines = _decompile_body(body, state)
+        state.script_blocks_decompiled.append((lbl, ts_lines))
+
     output = _assemble_output(state)
     return output, state.warnings
 

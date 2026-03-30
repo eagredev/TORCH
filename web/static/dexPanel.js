@@ -66,9 +66,9 @@ function drainSpriteQueue() {
     spriteActive++;
     processSprite(url).then(dataUrl => {
       img.src = dataUrl;
-      img.style.display = "";
+      img.style.visibility = "";
     }).catch(() => {
-      img.style.display = "none";
+      img.style.visibility = "hidden";
     }).finally(() => {
       spriteActive--;
       drainSpriteQueue();
@@ -255,7 +255,7 @@ function fillViewport(scrollContainer, appendFn) {
 function observeNewSprites(scrollContainer) {
   if (!observer) return;
   scrollContainer.querySelectorAll(".dex-panel-sprite[data-sprite]").forEach(img => {
-    if (!img.src || img.style.display === "none") observer.observe(img);
+    if (!img.src || img.style.visibility === "hidden") observer.observe(img);
   });
 }
 
@@ -274,8 +274,8 @@ function appendCards(container, start, count) {
     card.style.setProperty("--dp-glow", col + "30");
 
     card.innerHTML = `<img class="dex-panel-sprite" data-sprite="/api/sprites/${sp.sprite_path}"
-      width="48" height="48" style="image-rendering:pixelated;display:none"
-      onerror="this.style.display='none'">
+      width="48" height="48" style="image-rendering:pixelated;visibility:hidden"
+      onerror="this.style.visibility='hidden'">
       <span class="dex-panel-card-name">${esc(sp.name)}</span>`;
 
     card.addEventListener("click", () => showDetail(sp.const));
@@ -285,21 +285,22 @@ function appendCards(container, start, count) {
   return end;
 }
 
-/** Estimate level range from inline evo_from + evo_to_level data. */
+/** Estimate level range from inline evo_from + evo_to_level data.
+ *  Shows both the expected wild range AND the evolution level. */
 function inlineLevelRange(sp) {
   const evo = sp.evo_from;
-  const evoToLv = sp.evo_to_level;  // level this species evolves at (null if none)
+  const evoToLv = sp.evo_to_level;  // level this species next evolves at (null if none)
 
   if (!evo) {
-    // Base form — show range if it has a level-based evo
-    if (evoToLv) return `Lv.1\u2013${evoToLv - 1}`;
+    // Base form — show range + evo level if it has a level-based evo
+    if (evoToLv) return `Lv.1\u2013${evoToLv - 1} \u2192 ${evoToLv}`;
     return ""; // no evo data at all
   }
 
   // Evolved via level (param must be non-zero for a real level evo)
   if (evo.method === "LEVEL" && evo.param && evo.param !== "0") {
     const minLv = parseInt(evo.param, 10);
-    if (evoToLv) return `Lv.${minLv}\u2013${evoToLv - 1}`;
+    if (evoToLv) return `Lv.${minLv}\u2013${evoToLv - 1} \u2192 ${evoToLv}`;
     return `Lv.${minLv}+`;
   }
 
@@ -336,14 +337,13 @@ function appendListRows(container, start, count) {
 
     const bst = sp.bst || 0;
     const lvRange = inlineLevelRange(sp);
-    const lvHtml = lvRange ? `<span class="dex-panel-row-lv">${lvRange}</span>` : "";
 
     row.innerHTML = `<span class="dex-panel-row-num">${dexNum}</span>
       <img class="dex-panel-sprite dex-panel-row-sprite" data-sprite="/api/sprites/${sp.sprite_path}"
-        width="32" height="32" style="image-rendering:pixelated;display:none"
-        onerror="this.style.display='none'">
+        width="32" height="32" style="image-rendering:pixelated;visibility:hidden"
+        onerror="this.style.visibility='hidden'">
       <span class="dex-panel-row-name">${esc(sp.name)}</span>
-      ${lvHtml}
+      <span class="dex-panel-row-lv">${lvRange}</span>
       <span class="dex-panel-row-bst">${bst}</span>
       <span class="dex-panel-row-types">${types}</span>`;
 
@@ -451,7 +451,7 @@ async function showDetail(speciesConst) {
     <a href="#" class="dex-panel-back">&larr; Back</a>
     <div class="dex-panel-detail-header">
       <img class="dex-panel-detail-sprite" data-sprite="/api/sprites/${data.sprite_path || ""}"
-        width="96" height="96" style="image-rendering:pixelated;display:none">
+        width="96" height="96" style="image-rendering:pixelated;visibility:hidden">
       <div class="dex-panel-detail-info">
         <div class="dex-panel-detail-name">${esc(data.name || "")} <span class="dex-panel-detail-num">${dexNum}</span></div>
         <div class="dex-panel-detail-types">${types}</div>
@@ -474,7 +474,7 @@ async function showDetail(speciesConst) {
   if (detailImg && detailImg.dataset.sprite) {
     processSprite(detailImg.dataset.sprite).then(url => {
       detailImg.src = url;
-      detailImg.style.display = "";
+      detailImg.style.visibility = "";
     }).catch(() => {});
   }
 

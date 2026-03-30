@@ -73,6 +73,8 @@ export const state = {
   spriteImages: {},
   triggerInfo: null,
   playerDistance: 0,
+  npcPatrolIndex: 0,
+  patrolMode: false,
   _ownTriggerInfo: null,        // this script's own trigger_info (before chain override)
   // Chain state
   chainName: "",                // active chain name, or "" for standalone
@@ -129,6 +131,7 @@ export function setCameraLocked(locked) {
 }
 
 export const TRIGGER_DISTANCE_CHANGED = "trigger-distance-changed";
+export const PATROL_MODE_CHANGED = "patrol-mode-changed";
 
 export async function setPlayerDistance(distance) {
   if (!state.triggerInfo) return;
@@ -145,6 +148,54 @@ export async function setPlayerDistance(distance) {
   } else {
     await resimulate(state.source);
   }
+}
+
+export function togglePatrolMode() {
+  state.patrolMode = !state.patrolMode;
+  emit(PATROL_MODE_CHANGED, state.patrolMode);
+}
+
+export function setNpcPatrolIndex(index) {
+  if (!state.triggerInfo) return;
+  const positions = state.triggerInfo.npc_positions || [];
+  if (index < 0 || index >= positions.length) return;
+  state.npcPatrolIndex = index;
+
+  const pos = positions[index];
+  if (!pos) return;
+
+  // Update trigger info for player distance calculations
+  state.triggerInfo.npc_x = pos.x;
+  state.triggerInfo.npc_y = pos.y;
+  state.triggerInfo.facing = pos.facing;
+  const dir_offsets = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
+  const [dx, dy] = dir_offsets[pos.facing] || [0, 1];
+  state.triggerInfo.dx = dx;
+  state.triggerInfo.dy = dy;
+
+  // Update positions directly in all frames (no server round-trip)
+  const alias = state.triggerInfo.alias || "";
+  const dist = state.playerDistance || state.triggerInfo.default_distance || 1;
+  const opposite = { left: "right", right: "left", up: "down", down: "up" };
+
+  for (const frame of state.frames) {
+    if (!frame.actors) continue;
+    // Move NPC to patrol position
+    if (alias && frame.actors[alias]) {
+      frame.actors[alias].x = pos.x;
+      frame.actors[alias].y = pos.y;
+      frame.actors[alias].facing = pos.facing;
+    }
+    // Move player based on sight distance from new NPC position
+    if (frame.actors.player) {
+      frame.actors.player.x = pos.x + dx * dist;
+      frame.actors.player.y = pos.y + dy * dist;
+      frame.actors.player.facing = opposite[pos.facing] || "up";
+    }
+  }
+
+  emit(PATROL_MODE_CHANGED, state.patrolMode);  // triggers canvas re-render
+  emit(BEAT_CHANGED, state.currentBeat);         // triggers overlay re-render
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +272,9 @@ export async function resimulate(newSource) {
     if (state.triggerInfo && state.playerDistance != null) {
       body.player_distance = state.playerDistance;
     }
+    if (state.npcPatrolIndex > 0) {
+      body.npc_patrol_index = state.npcPatrolIndex;
+    }
     // Chain support: pass initial_positions when chain is active
     if (state.chainStartPositions) {
       body.initial_positions = state.chainStartPositions;
@@ -295,6 +349,8 @@ export async function loadScene(mapName, scriptName) {
   state.triggerInfo = res.data.trigger_info || null;
   state._ownTriggerInfo = state.triggerInfo;  // save before chain may override
   state.playerDistance = state.triggerInfo ? state.triggerInfo.default_distance : 0;
+  state.npcPatrolIndex = 0;
+  state.patrolMode = false;
   await preloadSprites();
 
   // Discover chains containing this script

@@ -174,6 +174,18 @@ def handle_status(handler, match, query_params):
             except ValueError:
                 pass
 
+    # Map health summary (quick count of each state)
+    map_health = {}
+    if enrolled_count > 0:
+        try:
+            from torch.registry import load_registry, get_map_health
+            reg2 = load_registry(project_dir)
+            for map_name in reg2.get("maps", {}):
+                h = get_map_health(project_dir, map_name, game_path)
+                map_health[h] = map_health.get(h, 0) + 1
+        except Exception:
+            pass
+
     return ok_response({
         "project_name": proj_name,
         "torch_version": torch.VERSION,
@@ -182,6 +194,7 @@ def handle_status(handler, match, query_params):
         "module_count": module_count,
         "enrolled_map_count": enrolled_count,
         "custom_map_count": custom_count,
+        "map_health": map_health,
         "build_available": True,
         "lan_url": lan_url,
         "lan_user": lan_user,
@@ -3375,6 +3388,16 @@ def handle_studio_map_detail(handler, match, query_params):
 
     _, custom_set = classify_maps(game_path)
     enrolled = is_enrolled(project_dir, map_name)
+
+    # Auto-enroll maps when loaded in Studio (idempotent, fast)
+    if not enrolled and project_dir:
+        try:
+            from torch.registry import enroll_map
+            enroll_map(project_dir, map_name)
+            enrolled = True
+        except Exception:
+            pass
+
     health = None
     if enrolled:
         try:
@@ -4044,8 +4067,70 @@ def _facing_from_movement_type(movement_type):
     return "down"
 
 
-def load_scene_initial_state(game_path, map_name, parsed_script):
+def _apply_mapscript_positions(game_path, map_name, object_events, positions):
+    """Override NPC positions using setobjectxyperm from mapscripts.
+
+    Vanilla maps frequently reposition NPCs via mapscript ON_TRANSITION /
+    ON_LOAD handlers.  Scan scripts.inc for setobjectxyperm calls and apply
+    the LAST position found for each NPC (last = most specific game state).
+    Also picks up setobjectmovementtype for facing direction.
+    """
+    import os
+    inc_path = os.path.join(game_path, "data", "maps", map_name, "scripts.inc")
+    if not os.path.isfile(inc_path):
+        return
+
+    try:
+        with open(inc_path, "r", encoding="utf-8") as f:
+            inc_text = f.read()
+    except OSError:
+        return
+
+    # Build LOCALID -> alias lookup from object_events + current positions
+    localid_to_alias = {}
+    for alias, pos_data in positions.items():
+        if alias == "player":
+            continue
+        # Find the object_event this alias refers to
+        m = re.match(r'^npc(\d+)$', alias)
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(object_events):
+                lid = object_events[idx].get("local_id", "")
+                if lid:
+                    localid_to_alias[lid] = alias
+
+    if not localid_to_alias:
+        return
+
+    # Scan for setobjectxyperm LOCALID, X, Y
+    for line in inc_text.split('\n'):
+        stripped = line.strip()
+        m = re.match(
+            r'^setobjectxyperm\s+(\w+),\s*(\d+),\s*(\d+)$', stripped)
+        if m:
+            lid, x, y = m.group(1), int(m.group(2)), int(m.group(3))
+            alias = localid_to_alias.get(lid)
+            if alias and alias in positions:
+                positions[alias]["x"] = x
+                positions[alias]["y"] = y
+
+        # Also pick up setobjectmovementtype for facing
+        m2 = re.match(
+            r'^setobjectmovementtype\s+(\w+),\s*(\w+)$', stripped)
+        if m2:
+            lid, mtype = m2.group(1), m2.group(2)
+            alias = localid_to_alias.get(lid)
+            if alias and alias in positions:
+                positions[alias]["facing"] = _facing_from_movement_type(mtype)
+
+
+def load_scene_initial_state(game_path, map_name, parsed_script,
+                             script_name=""):
     """Load initial actor positions from map.json for the script's cast.
+
+    *script_name* is the workspace short name (e.g. "FootprintsMan") used to
+    auto-detect the NPC when the cast is empty.
 
     Returns: dict suitable for simulate_scene()'s initial_positions param.
     """
@@ -4077,10 +4162,64 @@ def load_scene_initial_state(game_path, map_name, parsed_script):
                 "graphics_id": obj.get("graphics_id", ""),
             }
 
+    # Auto-detect NPC when cast is empty — match script label against map.json
+    if not cast and not first_npc_obj:
+        # Strategy 1: match by label beat in parsed script
+        first_label = ""
+        for beat in parsed_script.get("beats", []):
+            if beat.get("type") == "label":
+                first_label = beat.get("data", {}).get("name", "")
+                break
+
+        # Strategy 2: reconstruct possible labels from script_name
+        candidate_labels = []
+        if first_label:
+            candidate_labels.append(first_label)
+        if script_name:
+            candidate_labels.append(f"{map_name}_EventScript_{script_name}")
+            candidate_labels.append(f"{map_name}_{script_name}")
+            candidate_labels.append(script_name)
+
+        for label in candidate_labels:
+            for i, obj in enumerate(object_events):
+                if obj.get("script", "") == label:
+                    first_npc_obj = obj
+                    alias = f"npc{i + 1}"
+                    positions[alias] = {
+                        "x": obj.get("x", 0),
+                        "y": obj.get("y", 0),
+                        "facing": _facing_from_movement_type(
+                            obj.get("movement_type", "")),
+                        "visible": True,
+                        "graphics_id": obj.get("graphics_id", ""),
+                    }
+                    break
+            if first_npc_obj:
+                break
+
+    # Override NPC positions from mapscript setobjectxyperm calls.
+    # Vanilla maps often reposition NPCs via mapscripts based on game state.
+    # The mapscript position is where the player actually encounters the NPC.
+    if game_path and positions:
+        _apply_mapscript_positions(game_path, map_name, object_events, positions)
+
     # Add player at a sensible default position.
     # Priority: coord_event trigger > trainer sight > adjacent to NPC > warp.
+    # Use the (possibly overridden) position from `positions` for NPC coords.
     if "player" not in positions:
         px, py, pf = 0, 0, "up"
+
+        # Resolve first NPC's actual position (after mapscript overrides)
+        first_alias = None
+        for name in positions:
+            if name != "player":
+                first_alias = name
+                break
+        npc_pos = positions.get(first_alias, {}) if first_alias else {}
+        nx = npc_pos.get("x", first_npc_obj.get("x", 0) if first_npc_obj else 0)
+        ny = npc_pos.get("y", first_npc_obj.get("y", 0) if first_npc_obj else 0)
+        npc_facing = npc_pos.get("facing", _facing_from_movement_type(
+            first_npc_obj.get("movement_type", "") if first_npc_obj else ""))
 
         # Check if any coord_event triggers this script's first label
         first_label = ""
@@ -4101,19 +4240,12 @@ def load_scene_initial_state(game_path, map_name, parsed_script):
             # Coord event trigger: player stands on the trigger tile
             px = coord_match.get("x", 0)
             py = coord_match.get("y", 0)
-            # Face toward nearest NPC
-            if first_npc_obj is not None:
+            if first_npc_obj is not None or first_alias:
                 from torch.scene_sim import facing_toward
-                pf = facing_toward(px, py,
-                                   first_npc_obj.get("x", 0),
-                                   first_npc_obj.get("y", 0))
+                pf = facing_toward(px, py, nx, ny)
             else:
                 pf = "down"
-        elif first_npc_obj is not None:
-            nx = first_npc_obj.get("x", 0)
-            ny = first_npc_obj.get("y", 0)
-            npc_facing = _facing_from_movement_type(
-                first_npc_obj.get("movement_type", ""))
+        elif first_npc_obj is not None or first_alias:
 
             # Direction offsets: (dx, dy, player_facing_back)
             dir_offsets = {"left": (-1, 0, "right"), "right": (1, 0, "left"),
@@ -4122,11 +4254,12 @@ def load_scene_initial_state(game_path, map_name, parsed_script):
 
             # Check for trainer sight range
             sight = 0
-            try:
-                sight = int(first_npc_obj.get(
-                    "trainer_sight_or_berry_tree_id", "0"))
-            except (ValueError, TypeError):
-                pass
+            if first_npc_obj:
+                try:
+                    sight = int(first_npc_obj.get(
+                        "trainer_sight_or_berry_tree_id", "0"))
+                except (ValueError, TypeError):
+                    pass
 
             if sight > 0:
                 # Trainer: place player at edge of sight range
@@ -4203,23 +4336,81 @@ def _build_trigger_info(game_path, map_name, cast, object_events,
             "max_distance": 3,
             "default_distance": default_idx,
         }
-    npc_facing = _facing_from_movement_type(obj.get("movement_type", ""))
     nx, ny = obj.get("x", 0), obj.get("y", 0)
+
+    # Compute all valid NPC patrol positions + facings from movement_type.
+    npc_positions = _compute_patrol_positions(obj)
+
+    # Default facing for the sight line
+    default_facing = npc_positions[0]["facing"] if npc_positions else "down"
     dir_offsets = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}
-    dx, dy = dir_offsets.get(npc_facing, (0, 1))
-    # min_distance=1 (adjacent), max_distance=sight (or 1 if no range)
-    max_dist = max(sight, 1)
+    dx, dy = dir_offsets.get(default_facing, (0, 1))
+
     return {
         "type": "sight",
         "alias": first_alias,
         "npc_x": nx, "npc_y": ny,
-        "facing": npc_facing,
+        "facing": default_facing,
         "dx": dx, "dy": dy,
         "sight_range": sight,
         "min_distance": 1,
-        "max_distance": max_dist,
-        "default_distance": max_dist,
+        "max_distance": max(sight, 1),
+        "default_distance": max(sight, 1),
+        "npc_positions": npc_positions,
     }
+
+
+def _compute_patrol_positions(obj):
+    """Compute all tiles an NPC could stand on + which way they face.
+
+    Returns a list of {x, y, facing} dicts derived from the NPC's
+    movement_type and movement_range_x/y.  For stationary NPCs, returns
+    a single entry at the origin.
+    """
+    nx = obj.get("x", 0)
+    ny = obj.get("y", 0)
+    mt = (obj.get("movement_type", "") or "").upper()
+    try:
+        rx = int(obj.get("movement_range_x", 0))
+    except (ValueError, TypeError):
+        rx = 0
+    try:
+        ry = int(obj.get("movement_range_y", 0))
+    except (ValueError, TypeError):
+        ry = 0
+
+    positions = []
+
+    if "WALK_UP_AND_DOWN" in mt or "WALK_DOWN_AND_UP" in mt:
+        # Patrol vertically: origin ± range_y, faces up or down
+        for dy in range(-ry, ry + 1):
+            facing = "up" if dy < 0 else "down" if dy > 0 else "down"
+            positions.append({"x": nx, "y": ny + dy, "facing": facing})
+
+    elif "WALK_LEFT_AND_RIGHT" in mt or "WALK_RIGHT_AND_LEFT" in mt:
+        # Patrol horizontally: origin ± range_x, faces left or right
+        for dx in range(-rx, rx + 1):
+            facing = "left" if dx < 0 else "right" if dx > 0 else "right"
+            positions.append({"x": nx + dx, "y": ny, "facing": facing})
+
+    elif "WALK_SEQUENCE" in mt or "WALK_AROUND" in mt or "WANDER" in mt or "WALK_RANDOMLY" in mt:
+        # Roam within range_x × range_y rectangle, could face any direction
+        for dy in range(-ry, ry + 1):
+            for dx in range(-rx, rx + 1):
+                # At each tile, they could face any direction
+                positions.append({"x": nx + dx, "y": ny + dy, "facing": "down"})
+
+    elif "LOOK_AROUND" in mt:
+        # Stays at origin, faces all 4 directions
+        for f in ("down", "up", "left", "right"):
+            positions.append({"x": nx, "y": ny, "facing": f})
+
+    else:
+        # Stationary: single position, facing from movement_type
+        facing = _facing_from_movement_type(obj.get("movement_type", ""))
+        positions.append({"x": nx, "y": ny, "facing": facing})
+
+    return positions
 
 
 def _build_coord_trigger_info(map_data, parsed_script, object_events):
@@ -4266,6 +4457,31 @@ def _build_coord_trigger_info(map_data, parsed_script, object_events):
         "max_distance": max(len(tiles) - 1, 0),
         "default_distance": 0,
     }
+
+
+def _apply_npc_patrol(positions, trigger_info, patrol_index):
+    """Override the NPC position from the patrol positions list.
+
+    Updates both the positions dict (for simulation) and the trigger_info
+    (for subsequent player distance calculation).
+    """
+    npc_positions = trigger_info.get("npc_positions", [])
+    if not npc_positions or patrol_index < 0 or patrol_index >= len(npc_positions):
+        return
+    pos = npc_positions[patrol_index]
+    alias = trigger_info.get("alias", "")
+    if alias and alias in positions:
+        positions[alias]["x"] = pos["x"]
+        positions[alias]["y"] = pos["y"]
+        positions[alias]["facing"] = pos["facing"]
+    # Update trigger_info so _apply_player_distance uses the patrol position
+    trigger_info["npc_x"] = pos["x"]
+    trigger_info["npc_y"] = pos["y"]
+    trigger_info["facing"] = pos["facing"]
+    dir_offsets = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}
+    dx, dy = dir_offsets.get(pos["facing"], (0, 1))
+    trigger_info["dx"] = dx
+    trigger_info["dy"] = dy
 
 
 def _apply_player_distance(positions, trigger_info, distance):
@@ -4470,6 +4686,49 @@ def _get_script_path(project_dir, map_name, script_name):
     escape the project directory.
     """
     return _safe_path(project_dir, map_name, f"{script_name}.txt")
+
+
+def _auto_decompile_for_preview(game_path, project_dir, map_name, script_name):
+    """Find a vanilla script by short name and decompile to workspace.
+
+    Always re-decompiles to keep the workspace file in sync with the game
+    source.  Workspace .txt files for vanilla scripts are treated as a cache —
+    TORCH regenerates them automatically so the user never sees stale data.
+
+    Returns the workspace filepath on success, None on failure.
+    """
+    if not game_path or not project_dir:
+        return None
+
+    try:
+        from torch.web.api_npc_editor import (
+            _find_script, _decompile_script_to_workspace,
+        )
+    except ImportError:
+        return None
+
+    # Try common label patterns: MapName_EventScript_Name, MapName_Name
+    candidates = [
+        f"{map_name}_EventScript_{script_name}",
+        f"{map_name}_{script_name}",
+        script_name,  # might be a full label already
+    ]
+
+    for label in candidates:
+        filepath, file_type = _find_script(game_path, map_name, label)
+        if filepath and file_type:
+            try:
+                short, ts_text, warnings = _decompile_script_to_workspace(
+                    game_path, map_name, label, project_dir,
+                    overwrite=True,
+                )
+                ws_path = _safe_path(project_dir, map_name, f"{short}.txt")
+                if os.path.isfile(ws_path):
+                    return ws_path
+            except (ValueError, OSError):
+                continue
+
+    return None
 
 
 def _list_scene_scripts(project_dir, map_name):
@@ -4924,8 +5183,16 @@ def handle_scene_detail(handler, match, query_params):
         return error_response("No project directory configured", 500)
 
     filepath = _get_script_path(project_dir, map_name, script_name)
-    if not os.path.isfile(filepath):
-        return error_response(f"Script '{script_name}' not found for map '{map_name}'", 404)
+
+    # Always refresh vanilla scripts from game source so previews stay in sync.
+    # This is cheap (<10ms) and ensures the workspace .txt is never stale.
+    refreshed = _auto_decompile_for_preview(
+        game_path, project_dir, map_name, script_name)
+    if refreshed:
+        filepath = refreshed
+    elif not os.path.isfile(filepath):
+        return error_response(
+            f"Script '{script_name}' not found for map '{map_name}'", 404)
 
     from torch.script_model import _parse_script
 
@@ -4940,8 +5207,20 @@ def handle_scene_detail(handler, match, query_params):
     object_events = map_data.get("object_events", [])
     cast = parsed.get("cast", {})
 
-    initial = load_scene_initial_state(game_path, map_name, parsed)
-    trigger_info = _build_trigger_info(game_path, map_name, cast, object_events,
+    initial = load_scene_initial_state(game_path, map_name, parsed,
+                                       script_name=script_name)
+
+    # Build effective cast: parsed cast + any auto-detected NPCs
+    effective_cast = dict(cast)
+    for name in initial:
+        if name != "player" and name not in effective_cast:
+            # Auto-detected NPC (e.g. "npc5") -> extract ID from name
+            m_npc = re.match(r"^npc(\d+)$", name)
+            if m_npc:
+                effective_cast[name] = int(m_npc.group(1))
+
+    trigger_info = _build_trigger_info(game_path, map_name, effective_cast,
+                                       object_events,
                                        map_data=map_data, parsed_script=parsed)
     setup_moves = _load_setup_movements(project_dir, map_name)
     frames = simulate_scene(parsed, initial, setup_moves)
@@ -4959,7 +5238,7 @@ def handle_scene_detail(handler, match, query_params):
         "map": map_name,
         "script": script_name,
         "source": source,
-        "cast": cast,
+        "cast": effective_cast,
         "frames": frames,
         "sprite_index": scene_sprites,
     }
@@ -5007,7 +5286,8 @@ def handle_scene_simulate(handler, match, query_params):
     # Only adopt chain positions for actors in the script's cast + player.
     # This ensures the chain doesn't inject actors that the script never uses
     # (e.g. Clyde appearing in Buster's simulation because the chain knows about Clyde).
-    initial = load_scene_initial_state(game_path, map_name, parsed)
+    initial = load_scene_initial_state(game_path, map_name, parsed,
+                                       script_name=script_name)
     if "initial_positions" in body and isinstance(body["initial_positions"], dict):
         chain_pos = body["initial_positions"]
         cast_aliases = set(parsed.get("cast", {}).keys())
@@ -5016,13 +5296,30 @@ def handle_scene_simulate(handler, match, query_params):
             if name in cast_aliases:
                 initial[name] = pos
 
-    # Apply player distance override if provided
+    # Build effective cast: parsed cast + auto-detected NPCs
     from torch.project_files import load_map_json
     map_data = load_map_json(game_path, map_name) or {}
     object_events = map_data.get("object_events", [])
     cast = parsed.get("cast", {})
-    trigger_info = _build_trigger_info(game_path, map_name, cast, object_events,
+    effective_cast = dict(cast)
+    for name in initial:
+        if name != "player" and name not in effective_cast:
+            m_npc = re.match(r"^npc(\d+)$", name)
+            if m_npc:
+                effective_cast[name] = int(m_npc.group(1))
+
+    # Apply player distance override if provided
+    trigger_info = _build_trigger_info(game_path, map_name, effective_cast,
+                                       object_events,
                                        map_data=map_data, parsed_script=parsed)
+    # Apply NPC patrol position override (walking trainers)
+    npc_patrol_index = body.get("npc_patrol_index")
+    if trigger_info and npc_patrol_index is not None:
+        try:
+            _apply_npc_patrol(initial, trigger_info, int(npc_patrol_index))
+        except (ValueError, TypeError):
+            pass
+
     player_distance = body.get("player_distance")
     if trigger_info and player_distance is not None:
         try:
@@ -5040,7 +5337,7 @@ def handle_scene_simulate(handler, match, query_params):
         "map": map_name,
         "script": script_name,
         "source": source,
-        "cast": parsed.get("cast", {}),
+        "cast": effective_cast,
         "frames": frames,
         "sprite_index": scene_sprites,
     })
@@ -6092,3 +6389,5 @@ import torch.web.api_templates  # noqa: E402,F401
 import torch.web.api_versions  # noqa: E402,F401
 import torch.web.api_map_render  # noqa: E402,F401
 import torch.web.api_events  # noqa: E402,F401
+import torch.web.api_music  # noqa: E402,F401
+import torch.web.api_stamps  # noqa: E402,F401

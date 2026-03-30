@@ -719,6 +719,13 @@ function renderList(container, maps, counts) {
           ${assetStaged > 0 ? `<div class="studio-tool-card-sub studio-stat-warn">${assetStaged} staged</div>` : `<div class="studio-tool-card-sub">${assetCustom} imported</div>`}
         </div>
       </a>
+      <a href="#/music" class="studio-tool-card">
+        <span class="studio-tool-card-icon">\u{266A}</span>
+        <div class="studio-tool-card-info">
+          <div class="studio-tool-card-name">Music</div>
+          <div class="studio-tool-card-sub">Browse &amp; play</div>
+        </div>
+      </a>
       <a href="#/explorer" class="studio-tool-card">
         <span class="studio-tool-card-icon">\u{1F5FA}</span>
         <div class="studio-tool-card-info">

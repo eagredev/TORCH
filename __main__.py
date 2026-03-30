@@ -39,6 +39,7 @@ Usage:
     torch tileset                Tileset Assistant — create & manage tilesets
     torch explore                Map Explorer — browse connectivity & find paths
     torch explore <MapName>      Map detail view for a specific map
+    torch music                  Music Browser — browse & preview game music
     torch new                    Create a fresh project from GitHub
     torch upgrade                Upgrade pokeemerald-expansion to a newer version
     torch upgrade --check        Show current version and available updates
@@ -120,6 +121,7 @@ _HAS_EXPLORE    = _module_available("torch.map_explorer")
 _HAS_COMPAT     = _module_available("torch.expansion_compat")
 _HAS_DECOMPILER = _module_available("torch.decompiler")
 _HAS_TEMPLATE   = _module_available("torch.template_stamper")
+_HAS_CUSTOM_STAMPS = _module_available("torch.custom_stamps")
 _HAS_WEB        = os.path.isdir(os.path.join(_PACKAGE_DIR, "web"))
 _IS_DEV = _pkg.BUILD_TRACK == "dev"
 
@@ -1371,10 +1373,30 @@ def _cmd_template(args, game_path, settings, proj_name):
         sys.exit(1)
 
     sub = args[1:] if len(args) > 1 else []
+
+    # Route custom stamp subcommands
     if sub:
+        subcmd = sub[0].lower()
+        if subcmd == "list":
+            _custom_stamp_list(game_path)
+            return
+        if subcmd == "create":
+            _custom_stamp_create_wizard(game_path, settings, proj_name)
+            return
+        if subcmd == "delete":
+            _custom_stamp_delete_wizard(game_path)
+            return
+        if subcmd == "place":
+            _custom_stamp_place_wizard(game_path, settings, proj_name)
+            return
+        if subcmd == "info":
+            stamp_id = sub[1] if len(sub) > 1 else None
+            _custom_stamp_info(game_path, stamp_id)
+            return
+        # Fall through to built-in CLI for pokecenter/pokemart
         _template_cli(sub, game_path, settings, proj_name)
     else:
-        _template_wizard(game_path, settings, proj_name)
+        _template_top_menu(game_path, settings, proj_name)
 
 
 def _template_cli(sub, game_path, settings, proj_name):
@@ -1690,6 +1712,469 @@ def _template_pick_group(groups_path):
     return None
 
 
+# ── Custom stamp TUI ───────────────────────────────────────────────────────
+
+
+def _template_top_menu(game_path, settings, proj_name):
+    """Top-level template menu: built-in templates vs custom stamps."""
+    while True:
+        clear_screen()
+        print_logo("Template Tools", proj_name)
+        print(BAR)
+        print()
+        print(f"  {_k('1')} {WHITE}Stamp a building{RST}   {DIM}Built-in PokéCenter / PokéMart{RST}")
+        if _HAS_CUSTOM_STAMPS:
+            print(f"  {_k('2')} {WHITE}Custom stamps{RST}      {DIM}Create, browse & place custom stamps{RST}")
+        print()
+        print(f"  {_k('q')} {DIM}Back{RST}")
+        print()
+
+        try:
+            choice = input(f"  {GOLD}>{RST} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if choice in ("q", ""):
+            return
+        if choice == "1":
+            _template_wizard(game_path, settings, proj_name)
+        elif choice == "2" and _HAS_CUSTOM_STAMPS:
+            _custom_stamp_menu(game_path, settings, proj_name)
+
+
+def _custom_stamp_menu(game_path, settings, proj_name):
+    """Custom stamps submenu."""
+    while True:
+        clear_screen()
+        print_logo("Custom Stamps", proj_name)
+        print(BAR)
+        print()
+        print(f"  {_k('1')} {WHITE}Create stamp{RST}       {DIM}Capture an existing map as a stamp{RST}")
+        print(f"  {_k('2')} {WHITE}Browse & place{RST}     {DIM}Place a custom stamp into your project{RST}")
+        print(f"  {_k('3')} {WHITE}Delete stamp{RST}       {DIM}Remove a stamp from your library{RST}")
+        print()
+        print(f"  {_k('q')} {DIM}Back{RST}")
+        print()
+
+        try:
+            choice = input(f"  {GOLD}>{RST} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if choice in ("q", ""):
+            return
+        if choice == "1":
+            _custom_stamp_create_wizard(game_path, settings, proj_name)
+        elif choice == "2":
+            _custom_stamp_place_wizard(game_path, settings, proj_name)
+        elif choice == "3":
+            _custom_stamp_delete_wizard(game_path)
+
+
+def _custom_stamp_list_maps(game_path):
+    """Return sorted list of map folder names."""
+    maps_dir = os.path.join(game_path, "data", "maps")
+    if not os.path.isdir(maps_dir):
+        return []
+    result = []
+    for name in sorted(os.listdir(maps_dir)):
+        if os.path.isfile(os.path.join(maps_dir, name, "map.json")):
+            result.append(name)
+    return result
+
+
+def _custom_stamp_pick_map(game_path, prompt_label="Select map"):
+    """Interactive map picker. Returns map name or None."""
+    maps = _custom_stamp_list_maps(game_path)
+    if not maps:
+        print(f"  {RED}No maps found in project.{RST}")
+        return None
+
+    page_size = 20
+    page = 0
+    total_pages = (len(maps) + page_size - 1) // page_size
+
+    while True:
+        start = page * page_size
+        end = min(start + page_size, len(maps))
+        print()
+        print(f"  {WHITE}{prompt_label}{RST} {DIM}(page {page + 1}/{total_pages}, "
+              f"{len(maps)} maps){RST}")
+        for i, name in enumerate(maps[start:end], start + 1):
+            print(f"    {_k(str(i))} {name}")
+        print()
+        nav_hints = []
+        if page > 0:
+            nav_hints.append("p=prev")
+        if page < total_pages - 1:
+            nav_hints.append("n=next")
+        nav_hints.append("q=cancel")
+        print(f"  {DIM}{', '.join(nav_hints)}{RST}")
+
+        try:
+            pick = input(f"  {GOLD}>{RST} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if pick == "q":
+            return None
+        if pick == "n" and page < total_pages - 1:
+            page += 1
+            continue
+        if pick == "p" and page > 0:
+            page -= 1
+            continue
+        try:
+            idx = int(pick) - 1
+            if 0 <= idx < len(maps):
+                return maps[idx]
+        except ValueError:
+            # Try as a name filter
+            filtered = [m for m in maps if pick in m.lower()]
+            if len(filtered) == 1:
+                return filtered[0]
+            elif len(filtered) > 1:
+                print(f"  {DIM}Multiple matches — be more specific or use a number.{RST}")
+            else:
+                print(f"  {DIM}No match.{RST}")
+
+
+def _custom_stamp_pick_stamp(game_path, prompt_label="Select stamp"):
+    """Interactive stamp picker. Returns stamp dict or None."""
+    from torch.custom_stamps import list_stamps
+    stamps = list_stamps(game_path)
+    if not stamps:
+        print(f"  {DIM}No custom stamps found. Create one first.{RST}")
+        return None
+
+    print()
+    print(f"  {WHITE}{prompt_label}{RST}")
+    for i, s in enumerate(stamps, 1):
+        dims = f"{s['width']}x{s['height']}" if s.get("width") else "?"
+        source = s.get("created_from", "")
+        print(f"    {_k(str(i))} {WHITE}{s['name']}{RST}  {DIM}{dims}  from {source}{RST}")
+    print()
+    print(f"  {_k('q')} {DIM}Cancel{RST}")
+
+    try:
+        pick = input(f"  {GOLD}>{RST} ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if pick.lower() == "q" or not pick:
+        return None
+    try:
+        idx = int(pick) - 1
+        if 0 <= idx < len(stamps):
+            return stamps[idx]
+    except ValueError:
+        pass
+    print(f"  {RED}Invalid selection.{RST}")
+    return None
+
+
+def _custom_stamp_list(game_path):
+    """Handle 'torch template list'."""
+    if not _HAS_CUSTOM_STAMPS:
+        print("  Custom stamps are not available in this release.")
+        return
+    from torch.custom_stamps import list_stamps
+    stamps = list_stamps(game_path)
+    if not stamps:
+        print("\n  No custom stamps found.")
+        print(f"  Create one with: {WHITE}torch template create{RST}\n")
+        return
+
+    print(f"\n  {WHITE}Custom Stamps{RST} ({len(stamps)})\n")
+    # Table header
+    print(f"  {'ID':<20} {'Name':<20} {'Size':<8} {'Source':<30}")
+    print(f"  {'-' * 20} {'-' * 20} {'-' * 8} {'-' * 30}")
+    for s in stamps:
+        sid = s["id"][:20]
+        name = s["name"][:20]
+        dims = f"{s.get('width', '?')}x{s.get('height', '?')}"
+        source = (s.get("created_from") or "")[:30]
+        print(f"  {sid:<20} {name:<20} {dims:<8} {source:<30}")
+    print()
+
+
+def _custom_stamp_info(game_path, stamp_id):
+    """Handle 'torch template info <stamp_id>'."""
+    if not _HAS_CUSTOM_STAMPS:
+        print("  Custom stamps are not available in this release.")
+        return
+    if not stamp_id:
+        print(f"  Usage: {WHITE}torch template info <stamp_id>{RST}")
+        return
+    from torch.custom_stamps import load_stamp
+    stamp = load_stamp(game_path, stamp_id)
+    if not stamp:
+        print(f"\n  {RED}Stamp not found:{RST} {stamp_id}\n")
+        return
+
+    print(f"\n  {WHITE}{stamp.get('name', stamp_id)}{RST}")
+    print(f"  {'ID:':<18} {stamp.get('id', '')}")
+    print(f"  {'Description:':<18} {stamp.get('description', '') or '(none)'}")
+    print(f"  {'Created from:':<18} {stamp.get('created_from', '')}")
+    print(f"  {'Dimensions:':<18} {stamp.get('width', '?')}x{stamp.get('height', '?')}")
+    print(f"  {'Primary tileset:':<18} {stamp.get('primary_tileset', '')}")
+    print(f"  {'Secondary tileset:':<18} {stamp.get('secondary_tileset', '')}")
+    print(f"  {'Music:':<18} {stamp.get('music', '')}")
+
+    warps = stamp.get("warp_events", [])
+    exit_count = sum(1 for w in warps if w.get("role") == "exit_warp")
+    print(f"  {'Warp events:':<18} {len(warps)} ({exit_count} exit)")
+    print(f"  {'Object events:':<18} {len(stamp.get('object_events', []))}")
+    print(f"  {'Coord events:':<18} {len(stamp.get('coord_events', []))}")
+    print(f"  {'BG events:':<18} {len(stamp.get('bg_events', []))}")
+
+    doors = stamp.get("door_positions", [])
+    if doors:
+        coords = ", ".join(f"({d['x']},{d['y']})" for d in doors)
+        print(f"  {'Door positions:':<18} {coords}")
+
+    tags = stamp.get("tags", [])
+    if tags:
+        print(f"  {'Tags:':<18} {', '.join(tags)}")
+    print()
+
+
+def _custom_stamp_create_wizard(game_path, settings, proj_name):
+    """Interactive wizard to create a stamp from an existing map."""
+    if not _HAS_CUSTOM_STAMPS:
+        print("  Custom stamps are not available in this release.")
+        return
+    import json as _json
+    from torch.custom_stamps import create_stamp
+
+    clear_screen()
+    print_logo("Create Custom Stamp", proj_name)
+    print(BAR)
+
+    # 1. Pick source map
+    source_map = _custom_stamp_pick_map(game_path, "Select source map to capture")
+    if not source_map:
+        return
+
+    # 2. Show warp events so user can pick exit warps
+    map_json_path = os.path.join(game_path, "data", "maps", source_map, "map.json")
+    try:
+        with open(map_json_path, "r", encoding="utf-8") as f:
+            map_data = _json.load(f)
+    except (OSError, _json.JSONDecodeError):
+        print(f"  {RED}Could not read map.json for {source_map}.{RST}")
+        return
+
+    warps = map_data.get("warp_events", [])
+    if not warps:
+        print(f"\n  {DIM}This map has no warp events. Stamps typically need at "
+              f"least one exit warp.{RST}")
+        try:
+            cont = input("  Continue anyway? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if cont not in ("y", "yes"):
+            return
+        exit_indices = []
+    else:
+        print(f"\n  {WHITE}Warp events in {source_map}:{RST}")
+        for i, w in enumerate(warps):
+            dest = w.get("dest_map", "?")
+            print(f"    {_k(str(i))} ({w.get('x', '?')},{w.get('y', '?')}) "
+                  f"-> {dest} warp {w.get('dest_warp_id', '?')}")
+        print()
+        print(f"  {DIM}Select exit warps (comma-separated indices, e.g. 0,1).{RST}")
+        print(f"  {DIM}Exit warps will be reconnected to the parent map on placement.{RST}")
+        try:
+            raw = input(f"  Exit warps: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not raw:
+            exit_indices = []
+        else:
+            try:
+                exit_indices = [int(x.strip()) for x in raw.split(",")]
+                for idx in exit_indices:
+                    if idx < 0 or idx >= len(warps):
+                        print(f"  {RED}Index {idx} out of range (0-{len(warps)-1}).{RST}")
+                        return
+            except ValueError:
+                print(f"  {RED}Invalid input. Enter comma-separated numbers.{RST}")
+                return
+
+    # 3. Stamp name
+    default_name = source_map.replace("_", " ")
+    try:
+        name = input(f"  Stamp name [{default_name}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not name:
+        name = default_name
+
+    # 4. Description
+    try:
+        description = input("  Description (optional): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    # 5. Include scripts?
+    try:
+        inc_scripts = input("  Include scripts from source map? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    include_scripts = inc_scripts in ("y", "yes")
+
+    # 6. Create it
+    print()
+    try:
+        manifest = create_stamp(
+            game_path, source_map, name, exit_indices,
+            include_scripts=include_scripts,
+            description=description,
+        )
+    except ValueError as e:
+        print(f"  {RED}Error:{RST} {e}")
+        return
+
+    print(f"  {GREEN}Stamp created:{RST} {manifest['name']}")
+    print(f"  {DIM}ID: {manifest['id']}{RST}")
+    print(f"  {DIM}Size: {manifest.get('width', '?')}x{manifest.get('height', '?')}{RST}")
+    print(f"  {DIM}Exit warps: {len(exit_indices)}{RST}")
+    if include_scripts:
+        print(f"  {DIM}Scripts included{RST}")
+    print()
+    input(f"  {DIM}Press Enter to continue{RST} > ")
+
+
+def _custom_stamp_place_wizard(game_path, settings, proj_name):
+    """Interactive wizard to place a custom stamp."""
+    if not _HAS_CUSTOM_STAMPS:
+        print("  Custom stamps are not available in this release.")
+        return
+    from torch.custom_stamps import validate_stamp_placement
+    from torch.template_stamper import stamp_custom
+
+    clear_screen()
+    print_logo("Place Custom Stamp", proj_name)
+    print(BAR)
+
+    # 1. Pick stamp
+    stamp = _custom_stamp_pick_stamp(game_path, "Select a stamp to place")
+    if not stamp:
+        return
+    stamp_id = stamp["id"]
+
+    # 2. Pick parent map
+    parent_map = _custom_stamp_pick_map(game_path, "Select parent map (outdoor/town)")
+    if not parent_map:
+        return
+
+    # 3. Door coordinates
+    result = _template_prompt_coords()
+    if result is None:
+        return
+    door_x, door_y = result
+
+    # 4. Validate
+    validation = validate_stamp_placement(
+        game_path, stamp_id, parent_map, door_x, door_y)
+    if validation["errors"]:
+        for e in validation["errors"]:
+            print(f"  {RED}Error:{RST} {e}")
+        return
+    for w in validation["warnings"]:
+        print(f"  {DIM}Warning: {w}{RST}")
+
+    # 5. Map name override
+    suggested = validation["suggested_name"]
+    try:
+        name_input = input(f"  Map name [{suggested}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    final_name = name_input if name_input else None
+
+    # If user provided a custom name, re-validate
+    if final_name:
+        recheck = validate_stamp_placement(
+            game_path, stamp_id, parent_map, door_x, door_y,
+            map_name_override=final_name)
+        if recheck["errors"]:
+            for e in recheck["errors"]:
+                print(f"  {RED}Error:{RST} {e}")
+            return
+
+    # 6. Map group
+    groups_path = os.path.join(game_path, "data", "maps", "map_groups.json")
+    group_name = _template_pick_group(groups_path)
+
+    # 7. Confirm
+    display_name = final_name or suggested
+    print()
+    print(f"  {WHITE}Stamp:{RST} {stamp['name']} -> {parent_map} at ({door_x},{door_y})")
+    print(f"  {WHITE}New map:{RST} {display_name}")
+    try:
+        confirm = input("  Proceed? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if confirm in ("n", "no"):
+        return
+
+    # 8. Stamp
+    stamp_result = stamp_custom(
+        game_path, stamp_id, parent_map, door_x, door_y,
+        map_name=final_name, map_group=group_name)
+
+    if not stamp_result["success"]:
+        for e in stamp_result.get("errors", []):
+            print(f"  {RED}Error:{RST} {e}")
+        return
+
+    print()
+    print(f"  {GREEN}Stamp placed successfully.{RST}")
+    map_name = stamp_result.get("map_name", display_name)
+    print(f"  {DIM}Map: {map_name}{RST}")
+    for f in stamp_result.get("created_files", []):
+        print(f"    {GREEN}\u2713{RST} Created {f}")
+    for f in stamp_result.get("modified_files", []):
+        print(f"    {GREEN}\u2713{RST} Modified {f}")
+    for w in stamp_result.get("warnings", []):
+        print(f"    {DIM}! {w}{RST}")
+    print()
+
+    # 9. Offer build
+    try:
+        build = input("  Build now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if build not in ("n", "no"):
+        _offer_build(game_path=game_path)
+
+
+def _custom_stamp_delete_wizard(game_path):
+    """Interactive wizard to delete a custom stamp."""
+    if not _HAS_CUSTOM_STAMPS:
+        print("  Custom stamps are not available in this release.")
+        return
+    from torch.custom_stamps import delete_stamp
+
+    stamp = _custom_stamp_pick_stamp(game_path, "Select stamp to delete")
+    if not stamp:
+        return
+
+    print()
+    try:
+        confirm = input(
+            f"  Delete stamp '{stamp['name']}'? This cannot be undone. [y/N]: "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if confirm not in ("y", "yes"):
+        print("  Cancelled.")
+        return
+
+    if delete_stamp(game_path, stamp["id"]):
+        print(f"  {GREEN}Deleted stamp:{RST} {stamp['name']}")
+    else:
+        print(f"  {RED}Failed to delete stamp.{RST}")
+    print()
+
+
 def _cmd_tileset(args, game_path, settings, proj_name):
     """Handle 'torch tileset'."""
     if not _HAS_TILESET:
@@ -1721,13 +2206,14 @@ def _cmd_decompile(args):
     if not _HAS_DECOMPILER:
         print("  Decompiler is not available in this release.")
         sys.exit(1)
-    if not args:
+    sub = args[1:]
+    if not sub:
         print("  Usage: torch decompile <file.pory> [MapName]")
         print("  Output goes to stdout. Redirect with > to save:")
         print("    torch decompile scripts.pory > scripts.txt")
         sys.exit(1)
-    path = args[0]
-    map_name = args[1] if len(args) > 1 else ""
+    path = sub[0]
+    map_name = sub[1] if len(sub) > 1 else ""
     if not os.path.isfile(path):
         print(f"  File not found: {path}", file=sys.stderr)
         sys.exit(1)
@@ -1738,6 +2224,31 @@ def _cmd_decompile(args):
             for w in warnings:
                 print(f"warning: {w}", file=sys.stderr)
         print(torscript, end="")
+    except Exception as e:
+        print(f"  Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_decompile_inc(args):
+    """Handle 'torch decompile-inc <file.inc> [MapName]'."""
+    sub = args[1:]
+    if not sub:
+        print("  Usage: torch decompile-inc <file.inc> [MapName]")
+        print("  Converts .inc assembly to Poryscript (.pory). Output to stdout.")
+        print("    torch decompile-inc scripts.inc Route101 > scripts.pory")
+        sys.exit(1)
+    path = sub[0]
+    map_name = sub[1] if len(sub) > 1 else ""
+    if not os.path.isfile(path):
+        print(f"  File not found: {path}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        from torch.inc_decompiler import decompile_inc_file
+        pory, warnings = decompile_inc_file(path, map_name)
+        if warnings:
+            for w in warnings:
+                print(f"warning: {w}", file=sys.stderr)
+        print(pory, end="")
     except Exception as e:
         print(f"  Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1926,6 +2437,12 @@ def _cmd_versions(args, game_path, project_dir, settings, proj_name):
         print("  Usage: torch versions [save|restore|bump|info|delete|list]")
 
 
+def _cmd_music(game_path, settings, proj_name):
+    """Handle 'torch music'."""
+    from torch.music_browser import music_browser
+    music_browser(game_path, settings, proj_name=proj_name)
+
+
 def _cmd_standalone_compile(args, workspace_expanded, output_dir, emotes_conf):
     """Handle standalone script compilation (no recognized subcommand)."""
     script_name = args[0]
@@ -2100,10 +2617,12 @@ _CLI_DISPATCH_TABLE = {
     "tilesets": ("tileset",  True),
     "explore":  ("explore",  False),
     "decompile": ("decompile", False),
+    "decompile-inc": ("decompile-inc", False),
     "gui":       ("gui",       False),
     "web":       ("gui",       False),
     "versions":  ("versions",  True),
     "version":   ("versions",  True),
+    "music":     ("music",     False),
 }
 
 
@@ -2180,6 +2699,7 @@ def _dispatch_subcommand(cmd, args, proj_name, proj_info, projects, settings,
         "tileset": lambda: _cmd_tileset(args, game_path, settings, proj_name),
         "explore": lambda: _cmd_explore(args, game_path, settings, proj_name),
         "decompile": lambda: _cmd_decompile(args),
+        "decompile-inc": lambda: _cmd_decompile_inc(args),
         "gui":      lambda: _cmd_gui(game_path, project_dir, settings, proj_name, args),
         "project": lambda: _cmd_project(project_dir, game_path, emotes_conf,
                                          source_display, settings, proj_name,
@@ -2193,6 +2713,7 @@ def _dispatch_subcommand(cmd, args, proj_name, proj_info, projects, settings,
                                     project_dir),
         "versions": lambda: _cmd_versions(args, game_path, project_dir,
                                           settings, proj_name),
+        "music": lambda: _cmd_music(game_path, settings, proj_name),
     }
 
     entry = _CLI_DISPATCH_TABLE.get(cmd)

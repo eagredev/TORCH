@@ -1,4 +1,5 @@
 """Tests for template_stamper.py — stamper engine."""
+import copy
 import json
 import os
 import shutil
@@ -1031,5 +1032,428 @@ def run_suite():
                 "raw `" in content, "raw block missing")
         _assert("mart: scripts.pory has ITEM_NONE",
                 "ITEM_NONE" in content, "ITEM_NONE missing")
+    finally:
+        cleanup()
+
+    # ==================================================================
+    # CUSTOM STAMP TESTS
+    # ==================================================================
+
+    from torch.template_stamper import (
+        stamp_custom, validate_custom_stamp,
+        _deparameterize_events, _create_unique_layout,
+    )
+    from torch.custom_stamps import create_stamp, STAMPS_DIR
+
+    def _make_stamp_game(stamp_name="TestStamp", stamp_script=None,
+                         parent_name="TestTown", **kwargs):
+        """Create a game dir with a source map suitable for stamp capture.
+
+        Returns (game_path, stamp_id, cleanup_fn).
+        """
+        gp, cleanup_base = _make_game(parent_name=parent_name, **kwargs)
+
+        # Create a source map to capture as a stamp
+        source_name = "SourceInterior"
+        src_dir = os.path.join(gp, "data", "maps", source_name)
+        os.makedirs(src_dir, exist_ok=True)
+
+        src_map_json = {
+            "id": "MAP_SOURCE_INTERIOR",
+            "name": source_name,
+            "layout": "LAYOUT_SOURCE_INTERIOR",
+            "music": "MUS_POKE_CENTER",
+            "region_map_section": "MAPSEC_NONE",
+            "requires_flash": False,
+            "weather": "WEATHER_NONE",
+            "map_type": "MAP_TYPE_INDOOR",
+            "allow_cycling": False,
+            "allow_escaping": False,
+            "allow_running": False,
+            "show_map_name": False,
+            "battle_scene": "MAP_BATTLE_SCENE_NORMAL",
+            "connections": None,
+            "object_events": [
+                {
+                    "graphics_id": "OBJ_EVENT_GFX_WOMAN_1",
+                    "x": 3, "y": 2, "elevation": 3,
+                    "movement_type": "MOVEMENT_TYPE_FACE_DOWN",
+                    "movement_range_x": 0, "movement_range_y": 0,
+                    "trainer_type": "TRAINER_TYPE_NONE",
+                    "trainer_sight_or_berry_tree_id": "0",
+                    "script": "SourceInterior_EventScript_NPC",
+                    "flag": "0",
+                },
+            ],
+            "warp_events": [
+                {"x": 4, "y": 7, "elevation": 0,
+                 "dest_map": "MAP_TEST_TOWN", "dest_warp_id": "0"},
+                {"x": 5, "y": 7, "elevation": 0,
+                 "dest_map": "MAP_TEST_TOWN", "dest_warp_id": "0"},
+            ],
+            "coord_events": [],
+            "bg_events": [],
+        }
+        with open(os.path.join(src_dir, "map.json"), "w") as f:
+            json.dump(src_map_json, f, indent=2, ensure_ascii=False)
+
+        # Write a scripts.pory for the source
+        pory_content = stamp_script or (
+            "mapscripts SourceInterior_MapScripts {}\n\n"
+            "script SourceInterior_EventScript_NPC {\n"
+            "    lock\n    faceplayer\n"
+            '    msgbox(format("Hello!"), MSGBOX_DEFAULT)\n'
+            "    release\n    end\n}\n"
+        )
+        with open(os.path.join(src_dir, "scripts.pory"), "w") as f:
+            f.write(pory_content)
+
+        # Add source layout to layouts.json
+        clear_project_cache()
+        layouts_path = os.path.join(gp, "data", "layouts", "layouts.json")
+        with open(layouts_path, "r") as f:
+            layouts = json.load(f)
+
+        # Create source layout directory with binaries
+        src_lay_dir = os.path.join(gp, "data", "layouts", source_name)
+        os.makedirs(src_lay_dir, exist_ok=True)
+        with open(os.path.join(src_lay_dir, "map.bin"), "wb") as f:
+            f.write(b"\\x00" * 64)
+        with open(os.path.join(src_lay_dir, "border.bin"), "wb") as f:
+            f.write(b"\\x00" * 8)
+
+        layouts["layouts"].append({
+            "id": "LAYOUT_SOURCE_INTERIOR",
+            "name": "SourceInterior_Layout",
+            "width": 10,
+            "height": 8,
+            "primary_tileset": "gTileset_Building",
+            "secondary_tileset": "gTileset_PokemonCenter",
+            "border_filepath": "data/layouts/SourceInterior/border.bin",
+            "blockdata_filepath": "data/layouts/SourceInterior/map.bin",
+        })
+        with open(layouts_path, "w") as f:
+            json.dump(layouts, f, indent=2, ensure_ascii=False)
+
+        # Create tileset dirs so validation passes
+        for sub, name in [("primary", "building"),
+                          ("secondary", "pokemoncenter")]:
+            os.makedirs(
+                os.path.join(gp, "data", "tilesets", sub, name),
+                exist_ok=True)
+
+        # Capture the stamp
+        clear_project_cache()
+        stamp = create_stamp(
+            gp, source_name, stamp_name,
+            exit_warp_indices=[0, 1],
+            include_scripts=bool(stamp_script is not None
+                                 or stamp_script is None),
+            description="Test stamp",
+        )
+        stamp_id = stamp["id"]
+
+        def cleanup():
+            clear_project_cache()
+            shutil.rmtree(gp, ignore_errors=True)
+
+        return gp, stamp_id, cleanup
+
+    # ── stamp_custom creates map + unique layout ────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5)
+        _assert("custom: stamp succeeds",
+                r["success"], f"errors={r.get('errors')}")
+        map_name = r["map_name"]
+        map_dir = os.path.join(gp, "data", "maps", map_name)
+        _assert("custom: map folder created",
+                os.path.isdir(map_dir), f"missing {map_dir}")
+        lay_dir = os.path.join(gp, "data", "layouts", map_name)
+        _assert("custom: unique layout dir created",
+                os.path.isdir(lay_dir), f"missing {lay_dir}")
+        _assert("custom: layout map.bin exists",
+                os.path.isfile(os.path.join(lay_dir, "map.bin")),
+                "map.bin missing")
+        _assert("custom: layout border.bin exists",
+                os.path.isfile(os.path.join(lay_dir, "border.bin")),
+                "border.bin missing")
+    finally:
+        cleanup()
+
+    # ── stamp_custom warp cross-linking ─────────────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5)
+        map_name = r["map_name"]
+        # Child exit warps point to parent
+        mj = _load_json(os.path.join(gp, "data", "maps",
+                                      map_name, "map.json"))
+        warps = mj["warp_events"]
+        _assert("custom: exit warp points to parent",
+                warps[0]["dest_map"] == "MAP_TEST_TOWN",
+                f"got {warps[0]['dest_map']}")
+        _assert("custom: exit warp dest_warp_id correct",
+                warps[0]["dest_warp_id"] == "0",
+                f"got {warps[0]['dest_warp_id']}")
+        # Parent map gets new warp
+        clear_project_cache()
+        pmj = _load_json(os.path.join(gp, "data", "maps",
+                                       "TestTown", "map.json"))
+        pwarps = pmj["warp_events"]
+        _assert("custom: parent has new warp",
+                len(pwarps) == 1, f"got {len(pwarps)}")
+        _assert("custom: parent warp at door coords",
+                pwarps[0]["x"] == 5 and pwarps[0]["y"] == 5,
+                f"got ({pwarps[0]['x']}, {pwarps[0]['y']})")
+    finally:
+        cleanup()
+
+    # ── stamp_custom with script_template ───────────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5)
+        map_name = r["map_name"]
+        spath = os.path.join(gp, "data", "maps", map_name, "scripts.pory")
+        _assert("custom: scripts.pory exists",
+                os.path.isfile(spath), "scripts.pory missing")
+        with open(spath, "r") as f:
+            content = f.read()
+        _assert("custom: scripts.pory has no {map_name} placeholder",
+                "{map_name}" not in content,
+                "unsubstituted placeholder found")
+        _assert("custom: scripts.pory has actual map name",
+                map_name in content,
+                f"{map_name} not found in scripts.pory")
+    finally:
+        cleanup()
+
+    # ── stamp_custom with no script_template (default stub) ─────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        # Modify stamp manifest to remove script_template
+        manifest_path = os.path.join(
+            gp, STAMPS_DIR, sid, "manifest.json")
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+        manifest["script_template"] = ""
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+        r = stamp_custom(gp, sid, "TestTown", 5, 5)
+        map_name = r["map_name"]
+        spath = os.path.join(gp, "data", "maps", map_name, "scripts.pory")
+        with open(spath, "r") as f:
+            content = f.read()
+        _assert("custom: default stub has mapscripts",
+                "mapscripts" in content and "_MapScripts" in content,
+                f"content={content!r}")
+    finally:
+        cleanup()
+
+    # ── _create_unique_layout adds entry to layouts.json ────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        from torch.custom_stamps import load_stamp as _load_stamp
+        stamp = _load_stamp(gp, sid)
+        stamp_dir = os.path.join(gp, STAMPS_DIR, sid)
+        result = _create_unique_layout(
+            gp, "MyCustomMap", stamp, stamp_dir)
+        _assert("layout: returns layout name",
+                result == "MyCustomMap_Layout",
+                f"got {result}")
+        # Check layouts.json
+        layouts = _load_json(os.path.join(
+            gp, "data", "layouts", "layouts.json"))
+        ids = [l["id"] for l in layouts["layouts"]]
+        _assert("layout: LAYOUT_MY_CUSTOM_MAP in layouts.json",
+                "LAYOUT_MY_CUSTOM_MAP" in ids,
+                f"ids={ids}")
+        # Check directory
+        lay_dir = os.path.join(gp, "data", "layouts", "MyCustomMap")
+        _assert("layout: directory created",
+                os.path.isdir(lay_dir), "dir missing")
+    finally:
+        cleanup()
+
+    # ── _deparameterize_events replaces placeholders ────────────
+    events = [
+        {"script": "{map_name}_EventScript_NPC",
+         "dest_map": "MAP_{MAP_CONST}", "x": 1},
+        {"script": "Common_EventScript_Foo", "y": 2},
+    ]
+    result = _deparameterize_events(events, "MyMap", "MY_MAP")
+    _assert("deparam: {map_name} replaced",
+            result[0]["script"] == "MyMap_EventScript_NPC",
+            f"got {result[0]['script']}")
+    _assert("deparam: {MAP_CONST} replaced",
+            result[0]["dest_map"] == "MAP_MY_MAP",
+            f"got {result[0]['dest_map']}")
+    _assert("deparam: non-placeholder unchanged",
+            result[1]["script"] == "Common_EventScript_Foo",
+            f"got {result[1]['script']}")
+    _assert("deparam: original not modified",
+            events[0]["script"] == "{map_name}_EventScript_NPC",
+            "original was modified")
+
+    # ── Two stamps from same source create independent layouts ──
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r1 = stamp_custom(gp, sid, "TestTown", 5, 5,
+                          map_name="Interior_A")
+        _assert("custom: first stamp succeeds",
+                r1["success"], f"errors={r1.get('errors')}")
+        r2 = stamp_custom(gp, sid, "TestTown", 6, 6,
+                          map_name="Interior_B")
+        _assert("custom: second stamp succeeds",
+                r2["success"], f"errors={r2.get('errors')}")
+        lay_a = os.path.join(gp, "data", "layouts", "Interior_A")
+        lay_b = os.path.join(gp, "data", "layouts", "Interior_B")
+        _assert("custom: layout A exists",
+                os.path.isdir(lay_a), "layout A missing")
+        _assert("custom: layout B exists",
+                os.path.isdir(lay_b), "layout B missing")
+        # Both have separate entries in layouts.json
+        layouts = _load_json(os.path.join(
+            gp, "data", "layouts", "layouts.json"))
+        ids = [l["id"] for l in layouts["layouts"]]
+        _assert("custom: both layouts in layouts.json",
+                "LAYOUT_INTERIOR_A" in ids
+                and "LAYOUT_INTERIOR_B" in ids,
+                f"ids={ids}")
+    finally:
+        cleanup()
+
+    # ── validate_custom_stamp delegates correctly ───────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = validate_custom_stamp(gp, sid, "TestTown", 5, 5)
+        _assert("validate_custom: returns valid",
+                r["valid"], f"errors={r['errors']}")
+        _assert("validate_custom: has suggested_name",
+                len(r["suggested_name"]) > 0,
+                f"suggested_name={r['suggested_name']}")
+    finally:
+        cleanup()
+
+    # ── stamp_custom with map_name override ─────────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5,
+                         map_name="CustomNamedMap")
+        _assert("custom: name override accepted",
+                r["map_name"] == "CustomNamedMap",
+                f"got {r['map_name']}")
+        _assert("custom: override dir exists",
+                os.path.isdir(os.path.join(
+                    gp, "data", "maps", "CustomNamedMap")),
+                "directory missing")
+    finally:
+        cleanup()
+
+    # ── Error: missing stamp ────────────────────────────────────
+    gp, cleanup_base = _make_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, "nonexistent_stamp", "TestTown", 5, 5)
+        _assert("custom: missing stamp -> failure",
+                not r["success"],
+                f"success={r['success']}")
+        _assert("custom: missing stamp error message",
+                any("not found" in e for e in r["errors"]),
+                f"errors={r['errors']}")
+    finally:
+        cleanup_base()
+
+    # ── Error: invalid parent map ───────────────────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "NoSuchParent", 5, 5)
+        _assert("custom: invalid parent -> failure",
+                not r["success"],
+                f"success={r['success']}")
+        _assert("custom: invalid parent error message",
+                any("not found" in e.lower() for e in r["errors"]),
+                f"errors={r['errors']}")
+    finally:
+        cleanup()
+
+    # ── stamp_custom adds map to map_groups.json ────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5,
+                         map_group="gMapGroup_IndoorTestTown")
+        map_name = r["map_name"]
+        clear_project_cache()
+        mg = _load_json(os.path.join(gp, "data", "maps",
+                                      "map_groups.json"))
+        indoor = mg.get("gMapGroup_IndoorTestTown", [])
+        _assert("custom: map in specified group",
+                map_name in indoor,
+                f"indoor group={indoor}")
+    finally:
+        cleanup()
+
+    # ── stamp_custom registers event_scripts.s ──────────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5)
+        map_name = r["map_name"]
+        es_path = os.path.join(gp, "data", "event_scripts.s")
+        with open(es_path, "r") as f:
+            content = f.read()
+        _assert("custom: event_scripts.s include added",
+                f"data/maps/{map_name}/scripts.inc" in content,
+                "include missing from event_scripts.s")
+    finally:
+        cleanup()
+
+    # ── stamp_custom map.json has correct layout id ─────────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5,
+                         map_name="MyRoom")
+        mj = _load_json(os.path.join(gp, "data", "maps",
+                                      "MyRoom", "map.json"))
+        _assert("custom: map.json layout is unique",
+                mj["layout"] == "LAYOUT_MY_ROOM",
+                f"got {mj['layout']}")
+        _assert("custom: map.json id correct",
+                mj["id"] == "MAP_MY_ROOM",
+                f"got {mj['id']}")
+        _assert("custom: map.json inherits region_map_section",
+                mj["region_map_section"] == "MAPSEC_TESTTOWN",
+                f"got {mj['region_map_section']}")
+    finally:
+        cleanup()
+
+    # ── stamp_custom NPC script labels deparameterized ──────────
+    gp, sid, cleanup = _make_stamp_game()
+    try:
+        clear_project_cache()
+        r = stamp_custom(gp, sid, "TestTown", 5, 5,
+                         map_name="CoolRoom")
+        mj = _load_json(os.path.join(gp, "data", "maps",
+                                      "CoolRoom", "map.json"))
+        objs = mj.get("object_events", [])
+        _assert("custom: has NPC",
+                len(objs) >= 1, f"got {len(objs)} objects")
+        # The script label should contain the actual map name, not {map_name}
+        script = objs[0].get("script", "")
+        _assert("custom: NPC script has actual name",
+                "CoolRoom" in script and "{map_name}" not in script,
+                f"got {script}")
     finally:
         cleanup()

@@ -234,18 +234,21 @@ def _scan_music_tracks(game_path):
     entries = [(n, i) for n, i in entries if i < 0x7FFF]
 
     songs_dir = os.path.join(game_path, "sound", "songs")
+    midi_dir = os.path.join(songs_dir, "midi")
     results = []
     for const, mus_id in entries:
         is_custom = const not in VANILLA_MUSIC
         stem = const.replace("MUS_", "").lower()
         song_dir = os.path.join(songs_dir, stem)
         file_rel = f"sound/songs/{stem}/" if os.path.isdir(song_dir) else ""
+        has_midi = os.path.isfile(os.path.join(midi_dir, f"mus_{stem}.mid"))
         results.append({
             "name": _fmt_name(const, "MUS_"),
             "constant": const,
             "id": mus_id,
             "is_custom": is_custom,
             "file": file_rel,
+            "has_midi": has_midi,
         })
     return results
 

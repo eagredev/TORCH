@@ -7,6 +7,7 @@ import { api } from "../app.js";
 import { esc } from "../utils.js";
 import { processSprite } from "../spriteUtils.js";
 import { renderStudioNavbar } from "../studioNav.js";
+import { getMapFromHashOrContext } from "../viewContext.js";
 
 // ---------------------------------------------------------------------------
 // Encounter rate presets & helpers
@@ -1018,10 +1019,8 @@ async function renderDetail(container, mapConst) {
 // ---------------------------------------------------------------------------
 
 export async function render(container) {
-  const hash = window.location.hash || "";
-  const detailMatch = hash.match(/^#\/encounters\/(.+)$/);
-  if (detailMatch) {
-    let mapId = decodeURIComponent(detailMatch[1]);
+  let mapId = getMapFromHashOrContext();
+  if (mapId) {
 
     // If it doesn't look like a MAP_ constant, resolve it
     if (!mapId.startsWith("MAP_")) {

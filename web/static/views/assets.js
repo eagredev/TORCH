@@ -17,21 +17,77 @@ async function loadMidiPlayer() {
     if (mod.midiPlayer && mod.midiPlayer.canPlay()) {
       midiPlayer = mod.midiPlayer;
       midiPlayer.onStop = () => {
-        // Reset all play buttons
-        if (mainContainer) {
-          mainContainer.querySelectorAll(".ab-play-btn.playing").forEach(btn => {
-            btn.textContent = "\u25B6";
-            btn.classList.remove("playing");
-          });
-        }
+        _resetPlayButtons();
         currentlyPlayingConst = null;
       };
     }
   } catch (_) {
-    // MIDI player not available — no play buttons will render
+    // MIDI player not available — WAV-only playback
   }
 }
 let currentlyPlayingConst = null;
+let _wavAudio = null;  // shared <audio> element for WAV playback
+
+function _resetPlayButtons() {
+  if (mainContainer) {
+    mainContainer.querySelectorAll(".ab-play-btn.playing").forEach(btn => {
+      btn.textContent = "\u25B6";
+      btn.classList.remove("playing");
+    });
+  }
+}
+
+function _stopAllPlayback() {
+  if (_wavAudio) {
+    _wavAudio.oncanplaythrough = null;
+    _wavAudio.onerror = null;
+    _wavAudio.pause();
+  }
+  if (midiPlayer && midiPlayer.isPlaying()) midiPlayer.stop();
+  _resetPlayButtons();
+  currentlyPlayingConst = null;
+}
+
+function _playMusicTrack(constant, btn) {
+  _stopAllPlayback();
+  btn.textContent = "\u25A0";
+  btn.classList.add("playing");
+  currentlyPlayingConst = constant;
+
+  const stem = constant.toLowerCase();
+  const wavUrl = `/api/music/play/${stem}`;
+
+  // Fetch the WAV as a blob to avoid <audio> element event quirks.
+  // If the fetch succeeds, play via blob URL. If it fails, fall back to MIDI.
+  fetch(wavUrl)
+    .then(resp => {
+      if (currentlyPlayingConst !== constant) return; // user clicked something else
+      if (!resp.ok) throw new Error(resp.status);
+      return resp.blob();
+    })
+    .then(blob => {
+      if (!blob || currentlyPlayingConst !== constant) return;
+      if (!_wavAudio) {
+        _wavAudio = new Audio();
+        _wavAudio.addEventListener("ended", () => {
+          _resetPlayButtons();
+          currentlyPlayingConst = null;
+        });
+      }
+      _wavAudio.src = URL.createObjectURL(blob);
+      return _wavAudio.play();
+    })
+    .catch(() => {
+      // WAV failed — fall back to client-side MIDI
+      if (currentlyPlayingConst !== constant) return;
+      if (midiPlayer) {
+        midiPlayer.play(`/api/assets/music/${constant}/midi`);
+      } else {
+        _resetPlayButtons();
+        currentlyPlayingConst = null;
+      }
+    });
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -280,8 +336,8 @@ function renderListRow(asset) {
     ? `<span class="ab-custom-badge">Custom</span>`
     : "";
 
-  // Play button for music tracks (only if MIDI player loaded)
-  const playBtn = (activeCategory === "music" && midiPlayer)
+  // Play button for music tracks with MIDI files (WAV with MIDI fallback)
+  const playBtn = (activeCategory === "music" && asset.has_midi !== false)
     ? `<button class="ab-play-btn" data-midi="${esc(asset.constant)}" title="Preview">\u25B6</button>`
     : "";
 
@@ -333,28 +389,18 @@ function appendItems(container, count) {
   }
 
   // Wire MIDI play buttons
-  if (activeCategory === "music" && midiPlayer) {
+  if (activeCategory === "music") {
     listEl.querySelectorAll(".ab-play-btn[data-midi]").forEach(btn => {
       if (btn._wired) return;
       btn._wired = true;
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const constant = btn.dataset.midi;
-        if (midiPlayer.isPlaying() && currentlyPlayingConst === constant) {
-          midiPlayer.stop();
+        if (currentlyPlayingConst === constant) {
+          _stopAllPlayback();
           return;
         }
-        // Stop any current playback and reset buttons
-        midiPlayer.stop();
-        listEl.querySelectorAll(".ab-play-btn.playing").forEach(b => {
-          b.textContent = "\u25B6";
-          b.classList.remove("playing");
-        });
-        // Play this track
-        btn.textContent = "\u25A0";
-        btn.classList.add("playing");
-        currentlyPlayingConst = constant;
-        midiPlayer.play(`/api/assets/music/${constant}/midi`);
+        _playMusicTrack(constant, btn);
       });
     });
   }
@@ -844,7 +890,9 @@ async function renderContent(container) {
   `;
 
   renderedCount = 0;
-  appendItems(container, PAGE_SIZE);
+  const meta = CATEGORY_META[activeCategory] || {};
+  const batchSize = meta.visual === false ? filteredAssets.length : PAGE_SIZE;
+  appendItems(container, batchSize);
   wireToolbar(container);
 }
 
@@ -1012,11 +1060,8 @@ export function cleanup() {
     styleEl.remove();
     styleEl = null;
   }
-  // Stop MIDI playback on view change
-  if (midiPlayer && midiPlayer.isPlaying()) {
-    midiPlayer.stop();
-  }
-  currentlyPlayingConst = null;
+  // Stop all music playback on view change
+  _stopAllPlayback();
   clearTimeout(debounceTimer);
   categories = [];
   allAssets = [];

@@ -75,6 +75,12 @@ from torch.tests import (
     test_api_npc_editor,
     test_template_stamper,
     test_game_versions,
+    test_midi_synth,
+    test_music_player,
+    test_music_browser,
+    test_inc_decompiler,
+    test_custom_stamps,
+    test_api_stamps,
 )
 
 _SUITES = [
@@ -158,6 +164,12 @@ _SUITES = [
     ("api_npc_editor",     test_api_npc_editor),
     ("template_stamper",   test_template_stamper),
     ("game_versions",      test_game_versions),
+    ("midi_synth",         test_midi_synth),
+    ("music_player",       test_music_player),
+    ("music_browser",      test_music_browser),
+    ("inc_decompiler",     test_inc_decompiler),
+    ("custom_stamps",      test_custom_stamps),
+    ("api_stamps",         test_api_stamps),
 ]
 
 

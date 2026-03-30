@@ -37,6 +37,11 @@ SETTINGS_DEFAULTS = {
     "gui_lan_enabled": False,
     "gui_username": "",
     "gui_password": "",
+    "poryaaaa_path": "",
+    "audio_player": "",
+    "music_cache_max_mb": 200,
+    "music_sample_rate": 22050,
+    "music_default_duration": 180,
 }
 
 SETTINGS_DESCRIPTIONS = {
@@ -64,6 +69,11 @@ SETTINGS_DESCRIPTIONS = {
     "gui_lan_enabled": "Allow LAN access to web GUI (overrides gui_host to 0.0.0.0)",
     "gui_username": "HTTP Basic Auth username for web GUI (empty = no auth)",
     "gui_password": "HTTP Basic Auth password for web GUI (empty = no auth)",
+    "poryaaaa_path": "Path to poryaaaa_render binary (empty = auto-detect from PATH)",
+    "audio_player": "Audio player override for TUI playback (empty = auto-detect: pw-play, paplay, aplay)",
+    "music_cache_max_mb": "Max disk cache for rendered .wav files (MB)",
+    "music_sample_rate": "Render sample rate for music playback (22050 or 44100)",
+    "music_default_duration": "Default render duration in seconds",
 }
 
 

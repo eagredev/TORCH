@@ -148,21 +148,37 @@ def _parse_behaviors(game_path):
     return behaviors
 
 
-def _parse_metatile_bin(data):
+def _parse_metatile_bin(data, tiles_per_metatile=None):
     """Parse metatiles.bin into a list of metatile tile-ref lists.
 
     Each metatile is either 12 tiles (24 bytes, expansion) or 8 tiles
     (16 bytes, vanilla).  Each tile ref is a u16 decoded into::
 
         {"tile": int, "hflip": bool, "vflip": bool, "palette": int}
+
+    If *tiles_per_metatile* is provided (from fieldmap.h), use it directly.
+    Otherwise fall back to size-based heuristic (which can misdetect when
+    an 8-tile file happens to be divisible by 24).
     """
     total = len(data)
     if total == 0:
         return []
 
-    if total % 24 == 0:
+    if tiles_per_metatile and tiles_per_metatile in (8, 12):
+        tile_count = tiles_per_metatile
+        stride = tile_count * 2
+    elif total % 16 != 0 and total % 24 == 0:
+        # Only 24-divisible → must be 12-tile
         tile_count = 12
         stride = 24
+    elif total % 24 != 0 and total % 16 == 0:
+        # Only 16-divisible → must be 8-tile
+        tile_count = 8
+        stride = 16
+    elif total % 24 == 0 and total % 16 == 0:
+        # Ambiguous — default to 8-tile (safer, fewer false metatiles)
+        tile_count = 8
+        stride = 16
     else:
         tile_count = 8
         stride = 16
@@ -257,7 +273,16 @@ def handle_metatiles_detail(handler, match, query_params):
     except OSError as e:
         return error_response(f"Cannot read metatiles.bin: {e}", 500)
 
-    metatiles = _parse_metatile_bin(mt_data)
+    # Read tiles_per_metatile from fieldmap.h if available
+    _tiles_per_mt = None
+    try:
+        from torch.web.api_map_render import _read_fieldmap_constants
+        fm = _read_fieldmap_constants(game_path)
+        _tiles_per_mt = fm.get("tiles_per_metatile")
+    except ImportError:
+        pass
+
+    metatiles = _parse_metatile_bin(mt_data, _tiles_per_mt)
 
     # Read metatile_attributes.bin
     try:

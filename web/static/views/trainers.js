@@ -2734,7 +2734,12 @@ function renderGbaPreview(poryText) {
 // Main render
 // ---------------------------------------------------------------------------
 
-export async function render(container) {
+export async function render(container, context) {
+  // Context can specify a trainer to jump to directly (from IDE links)
+  if (context && context.trainerConst) {
+    await renderDetail(container, context.trainerConst);
+    return;
+  }
   const hash = window.location.hash || "";
   const detailMatch = hash.match(/^#\/trainers\/(.+)$/);
   if (detailMatch) {

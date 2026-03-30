@@ -43,6 +43,7 @@ export const IDE_CLOSE_SCRIPT = "ide:close-script";
 export const IDE_CAMERA_CHANGED = "ide:camera-changed"; // { panX, panY, zoom }
 export const IDE_SCRIPT_LOADED = "ide:script-loaded";   // { mapName, scriptName }
 export const IDE_SCRIPT_UNLOADED = "ide:script-unloaded";
+export const IDE_EVENT_UPDATED = "ide:event-updated";    // { mapName }
 
 // Track selected map globally so toolbar can provide context to modals
 let _currentMapName = null;

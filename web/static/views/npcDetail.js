@@ -142,6 +142,16 @@ const STYLES = `
 }
 .npcd-status-ok { color: #a6e3a1; }
 .npcd-status-err { color: #f38ba8; }
+.npcd-decompile-row {
+  margin-top: 0.5rem; display: flex; align-items: center; gap: 0.5rem;
+}
+.npcd-decompile-btn {
+  padding: 0.4rem 1rem; border: none; border-radius: 6px;
+  font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  background: var(--accent, #89b4fa); color: var(--bg-primary, #1e1e2e);
+}
+.npcd-decompile-btn:hover { opacity: 0.85; }
+.npcd-decompile-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Properties read-only summary */
 .npcd-props-summary { margin-top: 0.2rem; }
@@ -381,6 +391,7 @@ export async function renderNpcDetail(container, mapName, npcId) {
   wireDeleteButton(container, mapName, npcId, npc);
   wirePropertiesSave(container, mapName, npcId);
   wireDialogue(container, mapName, npcId, npc);
+  wireDecompile(container, mapName, npcId);
   wireCollapsibles(container);
 }
 
@@ -506,6 +517,7 @@ export async function renderNpcDetailModal(container, mapName, npcId) {
 
   // Wire dialogue save + live preview
   wireDialogue(container, mapName, npcId, npc);
+  wireDecompile(container, mapName, npcId);
 }
 
 function _humanizeConst(name, prefix) {
@@ -666,8 +678,12 @@ function renderHero(npc, npcId, displayName, badgeStyle, scriptType) {
 }
 
 function renderDialogueSection(npc) {
-  if (!npc.is_editable) {
+  if (!npc.is_editable && !npc.can_decompile) {
     return renderReadOnlyDialogueSection(npc);
+  }
+  // Not yet in workspace — show decompile button (auto-re-renders after convert)
+  if (npc.can_decompile) {
+    return renderDecompileSection(npc);
   }
 
   const text = npc.dialogue_readable || npc.dialogue || "";
@@ -723,6 +739,27 @@ function renderReadOnlyDialogueSection(npc) {
     </div>
     ${text ? `<div class="npcd-readonly-text">${esc(text)}</div>` : `<div class="npcd-ref-empty">No dialogue</div>`}
     ${hint}
+    ${previewHtml}
+  </div>`;
+}
+
+function renderDecompileSection(npc) {
+  const text = npc.dialogue_readable || npc.dialogue || "";
+  const previewHtml = text
+    ? `<div class="npcd-panel-title" style="margin-top:0.75rem">GBA Preview</div>
+       <div class="npcd-gba-preview-wrap">${renderGbaPreview(text)}</div>`
+    : "";
+
+  return `<div class="npcd-section">
+    <div class="npcd-section-header has-content">
+      <span class="npcd-section-title">Dialogue</span>
+    </div>
+    ${text ? `<div class="npcd-readonly-text">${esc(text)}</div>` : `<div class="npcd-ref-empty">No dialogue</div>`}
+    <div class="npcd-decompile-row">
+      <button class="npcd-decompile-btn" data-action="decompile">Convert to Editable</button>
+      <span class="npcd-status" data-status="decompile"></span>
+    </div>
+    <div class="npcd-edit-hint">This vanilla script can be converted to a TORCH workspace file for editing.</div>
     ${previewHtml}
   </div>`;
 }
@@ -1035,5 +1072,46 @@ function wireDialogue(container, mapName, npcId, npc) {
 
     saveBtn.disabled = false;
     saveBtn.textContent = "Save Dialogue";
+  });
+}
+
+function wireDecompile(container, mapName, npcId) {
+  const btn = container.querySelector('[data-action="decompile"]');
+  if (!btn) return;
+
+  const statusEl = container.querySelector('[data-status="decompile"]');
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Converting\u2026";
+    if (statusEl) { statusEl.textContent = ""; statusEl.className = "npcd-status"; }
+
+    const res = await postApi(
+      `/npcs/${encodeURIComponent(mapName)}/${encodeURIComponent(npcId)}/decompile`,
+      {}
+    );
+
+    if (res && res.ok) {
+      if (statusEl) {
+        statusEl.textContent = "Converted!";
+        statusEl.className = "npcd-status npcd-status-ok";
+      }
+      // Re-render the detail to show editable dialogue
+      const detail = await api(`/npcs/${encodeURIComponent(mapName)}/${encodeURIComponent(npcId)}`);
+      if (detail && detail.ok && detail.data) {
+        // Find the parent container and re-render
+        const parent = container.closest(".npcd-root") || container.closest(".npcm-detail") || container;
+        if (parent) {
+          await renderNpcDetail(parent, mapName, npcId);
+        }
+      }
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Convert to Editable";
+      if (statusEl) {
+        statusEl.textContent = res?.error || "Conversion failed";
+        statusEl.className = "npcd-status npcd-status-err";
+      }
+    }
   });
 }

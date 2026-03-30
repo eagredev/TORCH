@@ -11,8 +11,9 @@ import {
   ideEmit, ideOn,
   IDE_MAP_SELECTED, IDE_EVENT_SELECTED, IDE_EVENT_DESELECTED,
   IDE_COORDS_UPDATED, IDE_MODE_CHANGED, IDE_OPEN_SCRIPT,
-  IDE_CAMERA_CHANGED,
+  IDE_CAMERA_CHANGED, IDE_EVENT_UPDATED,
 } from "./ide.js";
+import { activateTab } from "./contextTabs.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -48,6 +49,16 @@ const EVENT_COLORS = {
   trigger: "rgba(251, 146, 60, 0.7)",    // orange
   sign:    "rgba(74, 222, 128, 0.8)",    // green
 };
+
+/** Read the current theme accent colour as "r, g, b" for use in rgba(). */
+function _getAccentRGB() {
+  const hex = getComputedStyle(document.documentElement)
+    .getPropertyValue("--accent").trim() || "#d4a017";
+  const r = parseInt(hex.slice(1, 3), 16) || 212;
+  const g = parseInt(hex.slice(3, 5), 16) || 160;
+  const b = parseInt(hex.slice(5, 7), 16) || 23;
+  return `${r}, ${g}, ${b}`;
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -105,9 +116,15 @@ let _dimNonScriptEvents = false;
 let _mode = "view";           // "view", "events", or "scripts"
 let _contextMenu = null;      // currently open context menu element
 
+// Stamp placement mode
+let _stampPending = null;     // { stamp_id, stamp } or null
+let _stampBanner = null;      // overlay element for placement mode indicator
+let _stampKeyHandler = null;  // keydown listener for Escape
+
 // Event handlers (for cleanup)
 let _mapUnsub = null;
 let _modeUnsub = null;
+let _eventUpdateUnsub = null;
 let _resizeObserver = null;
 let _boundWheel = null;
 let _boundMouseDown = null;
@@ -115,6 +132,8 @@ let _boundMouseMove = null;
 let _boundMouseUp = null;
 let _boundClick = null;
 let _boundMouseLeave = null;
+let _stampUnsub = null;
+let _mapChangeStampUnsub = null;
 
 // ---------------------------------------------------------------------------
 // Init / Cleanup
@@ -172,13 +191,41 @@ export function initMapCanvas(container) {
       _canvasWrap.style.cursor = _mode === "events" ? "crosshair" : "grab";
     }
   });
+
+  // Re-fetch events when properties are saved inline
+  _eventUpdateUnsub = ideOn(IDE_EVENT_UPDATED, async (d) => {
+    if (d.mapName === _mapName) {
+      const result = await _loadMapEvents(_mapName);
+      if (result) {
+        _events = result;
+        _preloadSprites(); // no await — sprites update as they load
+        _draw();
+      }
+    }
+  });
+
+  // Stamp placement mode — listen for stamp-pending from stamp library
+  _stampUnsub = ideOn("ide:stamp-pending", (d) => {
+    _enterStampPlacement(d);
+  });
+
+  // Cancel stamp placement when map changes
+  _mapChangeStampUnsub = ideOn(IDE_MAP_SELECTED, () => {
+    if (_stampPending) _cancelStampPlacement();
+  });
 }
 
 export function cleanupMapCanvas() {
   if (_mapUnsub) _mapUnsub();
   if (_modeUnsub) _modeUnsub();
+  if (_eventUpdateUnsub) _eventUpdateUnsub();
+  if (_stampUnsub) _stampUnsub();
+  if (_mapChangeStampUnsub) _mapChangeStampUnsub();
+  _cancelStampPlacement();
   _mapUnsub = null;
   _modeUnsub = null;
+  _stampUnsub = null;
+  _mapChangeStampUnsub = null;
 
   if (_resizeObserver) _resizeObserver.disconnect();
   _resizeObserver = null;
@@ -223,11 +270,14 @@ async function _loadMap(name) {
   _borderImg = null;
   _connectionStrips = [];
 
-  // Show loading state
+  // Remove empty state
   if (_container) {
     const existing = _container.querySelector(".ide-empty-state");
     if (existing) existing.remove();
   }
+
+  // Show loading overlay
+  _showLoading(name);
 
   // Load map image, events, and connections in parallel
   const [imgResult, eventsResult, connResult] = await Promise.allSettled([
@@ -235,6 +285,8 @@ async function _loadMap(name) {
     _loadMapEvents(name),
     _loadMapConnections(name),
   ]);
+
+  _updateLoadingProgress(50);
 
   if (imgResult.status === "fulfilled" && imgResult.value) {
     _mapImg = imgResult.value.img;
@@ -246,23 +298,54 @@ async function _loadMap(name) {
     _events = eventsResult.value;
     _mapW = _events.width || _mapW;
     _mapH = _events.height || _mapH;
-
-    // Pre-load NPC sprites
-    _preloadSprites();
   }
 
   if (connResult.status === "fulfilled" && connResult.value) {
     _connections = connResult.value;
   }
 
+  // Pre-load NPC sprites and wait for them
+  _updateLoadingProgress(70);
+  await _preloadSprites();
+
   // Load border and connection strips in background (don't block initial render)
   _loadBorderAndStrips(name);
 
-  // Defer fit+draw to next frame so the DOM layout has settled
+  // Hide loading overlay and render
+  _hideLoading();
   requestAnimationFrame(() => {
     _fitMap();
     _draw();
   });
+}
+
+// ---------------------------------------------------------------------------
+// Loading overlay
+// ---------------------------------------------------------------------------
+
+function _showLoading(mapName) {
+  if (!_canvasWrap) return;
+  _hideLoading(); // remove any previous
+  const overlay = document.createElement("div");
+  overlay.className = "ide-loading-overlay";
+  overlay.innerHTML = `
+    <div class="ide-loading-icon">\u{1F525}</div>
+    <div class="ide-loading-text">Loading ${mapName}...</div>
+    <div class="ide-loading-bar"><div class="ide-loading-fill" style="width:10%"></div></div>
+  `;
+  _canvasWrap.appendChild(overlay);
+}
+
+function _updateLoadingProgress(pct) {
+  if (!_canvasWrap) return;
+  const fill = _canvasWrap.querySelector(".ide-loading-fill");
+  if (fill) fill.style.width = pct + "%";
+}
+
+function _hideLoading() {
+  if (!_canvasWrap) return;
+  const el = _canvasWrap.querySelector(".ide-loading-overlay");
+  if (el) el.remove();
 }
 
 function _loadMapImage(name) {
@@ -297,23 +380,27 @@ async function _loadMapEvents(name) {
 }
 
 function _preloadSprites() {
-  if (!_events) return;
+  if (!_events) return Promise.resolve();
+  const promises = [];
   for (const npc of _events.object_events || []) {
     const url = npc.sprite_sheet_url;
     const fw = npc.frame_width || 16;
     const fh = npc.frame_height || 32;
     if (url && _spriteCache[url] === undefined) {
       _spriteCache[url] = null; // mark as loading
-      const img = new Image();
-      img.onload = () => {
-        // Process sheet: extract all facing frames with background removal
-        _spriteCache[url] = _processSheet(img, fw, fh);
-        _draw();
-      };
-      img.onerror = () => { _spriteCache[url] = null; };
-      img.src = url;
+      promises.push(new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          _spriteCache[url] = _processSheet(img, fw, fh);
+          resolve();
+        };
+        img.onerror = () => { _spriteCache[url] = null; resolve(); };
+        img.src = url;
+      }));
     }
   }
+  if (promises.length === 0) return Promise.resolve();
+  return Promise.all(promises);
 }
 
 /**
@@ -612,31 +699,39 @@ function _drawBorderAndStrips() {
     // Draw the strip at full brightness
     _ctx.drawImage(strip.img, sx, sy);
 
-    // Draw a colored outline around the strip
-    _ctx.strokeStyle = "rgba(167, 139, 250, 0.7)";
-    _ctx.lineWidth = lw;
+    // Themed neon outline around the strip
+    const accent = _getAccentRGB();
+    _ctx.strokeStyle = `rgba(${accent}, 0.5)`;
+    _ctx.lineWidth = 0.5;
     _ctx.strokeRect(sx, sy, strip.img.naturalWidth, strip.img.naturalHeight);
 
     _ctx.restore();
 
-    // Draw connection label with black outline for readability
-    // (drawn outside clip so it's always visible)
-    const clipW = Math.min(strip.img.naturalWidth, mapPxW + borderPx * 2);
-    const clipH = Math.min(strip.img.naturalHeight, mapPxH + borderPx * 2);
-    const labelX = sx + clipW / 2;
-    const labelY = sy + clipH / 2;
-    const labelSize = Math.max(8, 12 / _zoom);
-    _ctx.font = `bold ${labelSize}px sans-serif`;
-    _ctx.textAlign = "center";
-    _ctx.textBaseline = "middle";
-    // Black outline
-    _ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
-    _ctx.lineWidth = Math.max(2, 3 / _zoom);
+    // Tight connection label — pixel font, corner tag
+    const labelH = 3.5;
+    _ctx.font = `bold ${labelH}px monospace`;
+    _ctx.textAlign = "left";
+    _ctx.textBaseline = "top";
+    _ctx.imageSmoothingEnabled = false;
+
+    const label = strip.connMap;
+    const measured = _ctx.measureText(label);
+    const padX = 1;
+    const padY = 0.5;
+    const tagW = measured.width + padX * 2;
+    const tagH = labelH + padY * 2;
+    const tagX = sx;
+    const tagY = sy;
+
+    _ctx.fillStyle = `rgba(${accent}, 0.8)`;
+    _ctx.fillRect(tagX, tagY, tagW, tagH);
+
+    _ctx.lineWidth = 0.6;
     _ctx.lineJoin = "round";
-    _ctx.strokeText(strip.connMap, labelX, labelY);
-    // White fill
-    _ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-    _ctx.fillText(strip.connMap, labelX, labelY);
+    _ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+    _ctx.strokeText(label, tagX + padX, tagY + padY);
+    _ctx.fillStyle = "#fff";
+    _ctx.fillText(label, tagX + padX, tagY + padY);
   }
 }
 
@@ -746,6 +841,20 @@ function _drawEvents() {
   }
 }
 
+function _roundRect(x, y, w, h, r) {
+  _ctx.beginPath();
+  _ctx.moveTo(x + r, y);
+  _ctx.lineTo(x + w - r, y);
+  _ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  _ctx.lineTo(x + w, y + h - r);
+  _ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  _ctx.lineTo(x + r, y + h);
+  _ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  _ctx.lineTo(x, y + r);
+  _ctx.quadraticCurveTo(x, y, x + r, y);
+  _ctx.closePath();
+}
+
 function _drawConnections(lw, fontSize) {
   if (!_connections || !_mapW || !_mapH) return;
 
@@ -754,55 +863,55 @@ function _drawConnections(lw, fontSize) {
 
   const mapPxW = _mapW * METATILE_PX;
   const mapPxH = _mapH * METATILE_PX;
-  const labelSize = Math.max(7, 10 / _zoom);
-  const pad = 3 / _zoom;
+  const accent = _getAccentRGB();
+  const labelH = 3.5;
+  const padX = 1;
+  const padY = 0.5;
 
-  _ctx.font = `bold ${labelSize}px sans-serif`;
-  _ctx.textBaseline = "middle";
+  _ctx.font = `bold ${labelH}px monospace`;
+  _ctx.textAlign = "left";
+  _ctx.textBaseline = "top";
+  _ctx.imageSmoothingEnabled = false;
 
   for (const conn of conns) {
     const dir = (conn.direction || "").toLowerCase();
     const name = conn.map || "";
     if (!name) continue;
 
-    _ctx.fillStyle = "rgba(167, 139, 250, 0.7)";
-    _ctx.strokeStyle = "rgba(167, 139, 250, 0.5)";
-    _ctx.lineWidth = 2 / _zoom;
+    _ctx.strokeStyle = `rgba(${accent}, 0.5)`;
+    _ctx.lineWidth = 0.5;
 
-    let tx, ty;
+    let tagX, tagY;
     if (dir === "up" || dir === "north") {
-      _ctx.beginPath();
-      _ctx.moveTo(0, 0); _ctx.lineTo(mapPxW, 0);
-      _ctx.stroke();
-      _ctx.textAlign = "center";
-      tx = mapPxW / 2;
-      ty = -pad - labelSize / 2;
+      _ctx.beginPath(); _ctx.moveTo(0, 0); _ctx.lineTo(mapPxW, 0); _ctx.stroke();
+      tagX = 0; tagY = -(labelH + padY * 2);
     } else if (dir === "down" || dir === "south") {
-      _ctx.beginPath();
-      _ctx.moveTo(0, mapPxH); _ctx.lineTo(mapPxW, mapPxH);
-      _ctx.stroke();
-      _ctx.textAlign = "center";
-      tx = mapPxW / 2;
-      ty = mapPxH + pad + labelSize / 2;
+      _ctx.beginPath(); _ctx.moveTo(0, mapPxH); _ctx.lineTo(mapPxW, mapPxH); _ctx.stroke();
+      tagX = 0; tagY = mapPxH;
     } else if (dir === "left" || dir === "west") {
-      _ctx.beginPath();
-      _ctx.moveTo(0, 0); _ctx.lineTo(0, mapPxH);
-      _ctx.stroke();
-      _ctx.textAlign = "right";
-      tx = -pad;
-      ty = mapPxH / 2;
+      _ctx.beginPath(); _ctx.moveTo(0, 0); _ctx.lineTo(0, mapPxH); _ctx.stroke();
+      const m = _ctx.measureText(name);
+      tagX = -(m.width + padX * 2); tagY = 0;
     } else if (dir === "right" || dir === "east") {
-      _ctx.beginPath();
-      _ctx.moveTo(mapPxW, 0); _ctx.lineTo(mapPxW, mapPxH);
-      _ctx.stroke();
-      _ctx.textAlign = "left";
-      tx = mapPxW + pad;
-      ty = mapPxH / 2;
+      _ctx.beginPath(); _ctx.moveTo(mapPxW, 0); _ctx.lineTo(mapPxW, mapPxH); _ctx.stroke();
+      tagX = mapPxW; tagY = 0;
     } else {
       continue;
     }
 
-    _ctx.fillText(name, tx, ty);
+    const m = _ctx.measureText(name);
+    const tagW = m.width + padX * 2;
+    const tagH = labelH + padY * 2;
+
+    _ctx.fillStyle = `rgba(${accent}, 0.8)`;
+    _ctx.fillRect(tagX, tagY, tagW, tagH);
+
+    _ctx.lineWidth = 0.6;
+    _ctx.lineJoin = "round";
+    _ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+    _ctx.strokeText(name, tagX + padX, tagY + padY);
+    _ctx.fillStyle = "#fff";
+    _ctx.fillText(name, tagX + padX, tagY + padY);
   }
 }
 
@@ -1001,6 +1110,15 @@ function _onClick(e) {
   const my = e.clientY - rect.top;
   const pos = _screenToMap(mx, my);
 
+  // Stamp placement mode — intercept click
+  if (_stampPending) {
+    if (pos.tileX >= 0 && pos.tileX < _mapW &&
+        pos.tileY >= 0 && pos.tileY < _mapH && _mapName) {
+      _executeStampPlacement(pos.tileX, pos.tileY);
+    }
+    return;
+  }
+
   if (!_events) return;
 
   // Hit-test events (NPCs first, then warps, triggers, signs)
@@ -1189,6 +1307,15 @@ function _onContextMenu(e) {
       }
       items.push({ sep: true });
       items.push({
+        label: "Show in NPC List",
+        action: () => { activateTab("npcs"); ideEmit(IDE_EVENT_SELECTED, hit); },
+      });
+      items.push({
+        label: "Encounters Here",
+        action: () => activateTab("encounters"),
+      });
+      items.push({ sep: true });
+      items.push({
         label: "Delete NPC",
         danger: true,
         action: () => _deleteEvent("object", _findEventIndex("object_events", hit.data)),
@@ -1205,12 +1332,18 @@ function _onContextMenu(e) {
       }
       items.push({ sep: true });
       items.push({
+        label: "Show in Warps",
+        action: () => { activateTab("warps"); ideEmit(IDE_EVENT_SELECTED, hit); },
+      });
+      items.push({ sep: true });
+      items.push({
         label: "Delete Warp",
         danger: true,
         action: () => _deleteEvent("warp", hit.data.id),
       });
     } else if (hit.type === "trigger") {
       items.push({ label: `Trigger #${hit.data.id}`, disabled: true });
+      items.push({ sep: true });
       items.push({
         label: "Delete Trigger",
         danger: true,
@@ -1218,6 +1351,7 @@ function _onContextMenu(e) {
       });
     } else if (hit.type === "sign") {
       items.push({ label: `Sign #${hit.data.id}`, disabled: true });
+      items.push({ sep: true });
       items.push({
         label: "Delete Sign",
         danger: true,
@@ -1242,6 +1376,15 @@ function _onContextMenu(e) {
     items.push({
       label: "New Sign here",
       action: () => _createEvent("bg", tx, ty),
+    });
+    items.push({ sep: true });
+    items.push({
+      label: "Encounters Here",
+      action: () => activateTab("encounters"),
+    });
+    items.push({
+      label: "Place Stamp Here...",
+      action: () => _openStampLibraryAt(tx, ty),
     });
   }
 
@@ -1311,6 +1454,24 @@ async function _openNpcDetail(npcId) {
           cleanup: () => mod.cleanupNpcDetail(),
         };
       },
+    );
+  } catch (_) {}
+}
+
+async function _openStampLibraryAt(x, y) {
+  if (!_mapName) return;
+  try {
+    const { openToolModal } = await import("./toolbar.js");
+    openToolModal(
+      "Stamp Library",
+      async () => {
+        const mod = await import("./views/stampLibrary.js");
+        return {
+          render: (container) => mod.render(container),
+          cleanup: () => mod.cleanup(),
+        };
+      },
+      { presetCoords: { x, y }, mapName: _mapName },
     );
   } catch (_) {}
 }
@@ -1420,6 +1581,131 @@ function _startDrag(hit, tileX, tileY) {
     currentX: hit.data.x,
     currentY: hit.data.y,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Stamp placement mode
+// ---------------------------------------------------------------------------
+
+function _enterStampPlacement(detail) {
+  _stampPending = detail;
+
+  // Change cursor to crosshair
+  if (_canvasWrap) _canvasWrap.style.cursor = "crosshair";
+
+  // Show placement banner
+  _showStampBanner(detail.stamp?.name || detail.stamp_id || "stamp");
+
+  // Listen for Escape to cancel
+  _stampKeyHandler = (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      _cancelStampPlacement();
+    }
+  };
+  document.addEventListener("keydown", _stampKeyHandler, true);
+}
+
+function _cancelStampPlacement() {
+  _stampPending = null;
+  _removeStampBanner();
+
+  // Restore cursor based on current mode
+  if (_canvasWrap) {
+    _canvasWrap.style.cursor = _mode === "events" ? "crosshair" : "grab";
+  }
+
+  // Remove key listener
+  if (_stampKeyHandler) {
+    document.removeEventListener("keydown", _stampKeyHandler, true);
+    _stampKeyHandler = null;
+  }
+}
+
+function _showStampBanner(name) {
+  _removeStampBanner();
+  if (!_canvasWrap) return;
+
+  const banner = document.createElement("div");
+  banner.className = "ide-stamp-banner";
+
+  const text = document.createElement("span");
+  text.textContent = "Placing: " + name + " \u2014 click a door tile";
+  banner.appendChild(text);
+
+  const hint = document.createElement("span");
+  hint.className = "ide-stamp-hint";
+  hint.textContent = "Esc to cancel";
+  banner.appendChild(hint);
+
+  _canvasWrap.appendChild(banner);
+  _stampBanner = banner;
+}
+
+function _removeStampBanner() {
+  if (_stampBanner) {
+    _stampBanner.remove();
+    _stampBanner = null;
+  }
+}
+
+async function _executeStampPlacement(tileX, tileY) {
+  if (!_stampPending || !_mapName) return;
+
+  const { stamp_id } = _stampPending;
+  const stampName = _stampPending.stamp?.name || stamp_id;
+
+  // Show placing indicator on banner
+  if (_stampBanner) {
+    const text = _stampBanner.querySelector("span");
+    if (text) text.textContent = "Placing " + stampName + " at (" + tileX + ", " + tileY + ")...";
+  }
+
+  try {
+    const res = await fetch("/api/stamps/place", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stamp_id: stamp_id,
+        parent_map: _mapName,
+        door_x: tileX,
+        door_y: tileY,
+      }),
+    });
+    const data = await res.json();
+
+    if (data.ok) {
+      const createdMap = data.data?.map_name || data.data?.created_map || stampName;
+      _cancelStampPlacement();
+      _showStampResult(true, "Placed " + createdMap + " at (" + tileX + ", " + tileY + ")");
+      // Refresh canvas to show new warp
+      await _reloadEvents();
+    } else {
+      const msg = data.error || data.message || "Placement failed";
+      _showStampResult(false, msg);
+      // Keep placement mode active so user can try another tile
+    }
+  } catch (err) {
+    _showStampResult(false, "Network error: " + (err.message || "unknown"));
+  }
+}
+
+function _showStampResult(success, message) {
+  if (!_canvasWrap) return;
+
+  // Remove any previous result
+  const prev = _canvasWrap.querySelector(".ide-stamp-result");
+  if (prev) prev.remove();
+
+  const el = document.createElement("div");
+  el.className = "ide-stamp-result" + (success ? " success" : " failure");
+  el.textContent = message;
+  _canvasWrap.appendChild(el);
+
+  // Auto-dismiss after a few seconds
+  setTimeout(() => {
+    if (el.parentNode) el.remove();
+  }, success ? 4000 : 6000);
 }
 
 // ---------------------------------------------------------------------------

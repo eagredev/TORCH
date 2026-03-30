@@ -139,7 +139,7 @@ async function _onOpenScript(detail) {
   }
 
   // Always restore hash to IDE route
-  history.replaceState(null, "", prevHash || "#/ide");
+  history.replaceState(null, "", prevHash || "#/studio");
 }
 
 function _close() {

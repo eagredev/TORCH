@@ -11,8 +11,8 @@
  */
 
 import {
-  state, on, off,
-  BEAT_CHANGED, FRAMES_UPDATED,
+  state, on, off, setNpcPatrolIndex,
+  BEAT_CHANGED, FRAMES_UPDATED, PATROL_MODE_CHANGED,
 } from "./views/viz/state.js";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +54,7 @@ let _zoom = 2;
 
 let _beatHandler = null;
 let _framesHandler = null;
+let _patrolHandler = null;
 let _resizeObs = null;
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,17 @@ export function initScriptOverlay(canvasWrapEl) {
   // Subscribe to viz state changes
   _beatHandler = on(BEAT_CHANGED, () => renderOverlay());
   _framesHandler = on(FRAMES_UPDATED, () => renderOverlay());
+  _patrolHandler = on(PATROL_MODE_CHANGED, () => {
+    // Toggle pointer events on overlay for tile clicking
+    if (_canvas) {
+      _canvas.style.pointerEvents = state.patrolMode ? "auto" : "none";
+      _canvas.style.cursor = state.patrolMode ? "crosshair" : "";
+    }
+    renderOverlay();
+  });
+
+  // Patrol tile click handler on the overlay canvas
+  _canvas.addEventListener("click", _onPatrolClick);
 
   // Resize observer to keep overlay canvas sized correctly
   _resizeObs = new ResizeObserver(() => renderOverlay());
@@ -94,8 +106,12 @@ export function initScriptOverlay(canvasWrapEl) {
 export function cleanupScriptOverlay() {
   if (_beatHandler) { off(BEAT_CHANGED, _beatHandler); _beatHandler = null; }
   if (_framesHandler) { off(FRAMES_UPDATED, _framesHandler); _framesHandler = null; }
+  if (_patrolHandler) { off(PATROL_MODE_CHANGED, _patrolHandler); _patrolHandler = null; }
   if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
-  if (_canvas && _canvas.parentNode) _canvas.remove();
+  if (_canvas) {
+    _canvas.removeEventListener("click", _onPatrolClick);
+    if (_canvas.parentNode) _canvas.remove();
+  }
   if (_overlayDiv && _overlayDiv.parentNode) _overlayDiv.remove();
   _canvas = null;
   _ctx = null;
@@ -148,6 +164,11 @@ export function renderOverlay() {
   _ctx.imageSmoothingEnabled = false;
 
   const effects = frame.effects || [];
+
+  // Draw patrol position tiles when patrol mode is active
+  if (state.patrolMode) {
+    _drawPatrolTiles();
+  }
 
   // Draw fade effect (behind actors)
   _drawFade(effects, rect.width, rect.height);
@@ -329,6 +350,56 @@ function _roundRect(ctx, x, y, w, h, r) {
 // ---------------------------------------------------------------------------
 // Fade effects
 // ---------------------------------------------------------------------------
+
+function _onPatrolClick(e) {
+  if (!state.patrolMode || !state.triggerInfo || !state.triggerInfo.npc_positions) return;
+
+  const rect = _canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+
+  // Reverse the camera transform to get world coordinates
+  const worldX = (cx - _panX) / _zoom;
+  const worldY = (cy - _panY) / _zoom;
+  const tileX = Math.floor(worldX / METATILE_PX);
+  const tileY = Math.floor(worldY / METATILE_PX);
+
+  const positions = state.triggerInfo.npc_positions;
+  for (let i = 0; i < positions.length; i++) {
+    if (positions[i].x === tileX && positions[i].y === tileY) {
+      setNpcPatrolIndex(i);
+      return;
+    }
+  }
+}
+
+
+function _drawPatrolTiles() {
+  const ti = state.triggerInfo;
+  if (!ti || !ti.npc_positions || ti.npc_positions.length <= 1) return;
+
+  const positions = ti.npc_positions;
+  const selectedIdx = state.npcPatrolIndex || 0;
+
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i];
+    const sx = pos.x * METATILE_PX;
+    const sy = pos.y * METATILE_PX;
+
+    if (i === selectedIdx) {
+      _ctx.fillStyle = "rgba(212, 160, 23, 0.45)";
+      _ctx.strokeStyle = "rgba(212, 160, 23, 0.9)";
+      _ctx.lineWidth = 2 / _zoom;
+    } else {
+      _ctx.fillStyle = "rgba(137, 180, 250, 0.25)";
+      _ctx.strokeStyle = "rgba(137, 180, 250, 0.6)";
+      _ctx.lineWidth = 1 / _zoom;
+    }
+    _ctx.fillRect(sx, sy, METATILE_PX, METATILE_PX);
+    _ctx.strokeRect(sx, sy, METATILE_PX, METATILE_PX);
+  }
+}
+
 
 function _drawFade(effects, viewW, viewH) {
   const fadeBlack = effects.includes("fade_black");

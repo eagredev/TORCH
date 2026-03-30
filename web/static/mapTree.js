@@ -13,6 +13,7 @@ import {
   IDE_SCRIPT_LOADED, IDE_SCRIPT_UNLOADED,
 } from "./ide.js";
 import { initBeatPanel, cleanupBeatPanel } from "./scriptBeatPanel.js";
+import { openToolModal } from "./toolbar.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -29,11 +30,13 @@ let _mapUnsub = null;
 let _modeUnsub = null;
 let _scriptLoadUnsub = null;
 let _scriptUnloadUnsub = null;
-let _activeTab = "maps";    // "maps" or "beats"
+let _activeTab = "maps";    // "maps", "beats", or "project"
 let _scriptsMode = false;
 let _beatTabEl = null;
 let _mapsTabEl = null;
+let _projectTabEl = null;
 let _beatPanelHost = null;  // container for beat panel (sibling of _treeEl)
+let _projectHost = null;    // container for project tab content
 
 // ---------------------------------------------------------------------------
 // Init / Cleanup
@@ -46,10 +49,11 @@ export function initMapTree(container) {
   const header = document.createElement("div");
   header.className = "ide-left-header";
   header.innerHTML = `
-    <div style="display:flex;align-items:center;gap:0.3rem">
+    <div class="ide-left-tabs-row">
       <div class="ide-left-tabs">
         <button class="ide-left-tab active" data-tab="maps">Maps</button>
         <button class="ide-left-tab" data-tab="beats" style="display:none">Beats</button>
+        <button class="ide-left-tab" data-tab="project">Project</button>
       </div>
       <button class="ide-left-collapse" title="Collapse panel">\u25C0</button>
     </div>
@@ -62,8 +66,10 @@ export function initMapTree(container) {
 
   _mapsTabEl = header.querySelector('[data-tab="maps"]');
   _beatTabEl = header.querySelector('[data-tab="beats"]');
+  _projectTabEl = header.querySelector('[data-tab="project"]');
   _mapsTabEl.addEventListener("click", () => _switchTab("maps"));
   _beatTabEl.addEventListener("click", () => _switchTab("beats"));
+  _projectTabEl.addEventListener("click", () => _switchTab("project"));
 
   _searchEl = document.getElementById("ide-tree-search");
   _searchEl.addEventListener("input", _onSearch);
@@ -78,6 +84,12 @@ export function initMapTree(container) {
   _beatPanelHost.className = "ide-beat-panel-host";
   _beatPanelHost.style.cssText = "display:none;flex:1;overflow:hidden;";
   container.appendChild(_beatPanelHost);
+
+  // Project panel host (hidden by default)
+  _projectHost = document.createElement("div");
+  _projectHost.className = "ide-project-host";
+  _projectHost.style.cssText = "display:none;flex:1;overflow-y:auto;padding:0.5rem;";
+  container.appendChild(_projectHost);
 
   // Listen for external map selection (e.g. warp navigation)
   _mapUnsub = ideOn(IDE_MAP_SELECTED, (d) => {
@@ -119,7 +131,9 @@ export function cleanupMapTree() {
   _scriptsMode = false;
   _beatTabEl = null;
   _mapsTabEl = null;
+  _projectTabEl = null;
   _beatPanelHost = null;
+  _projectHost = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,19 +245,27 @@ function _switchTab(tab) {
 
   if (_mapsTabEl) _mapsTabEl.classList.toggle("active", tab === "maps");
   if (_beatTabEl) _beatTabEl.classList.toggle("active", tab === "beats");
+  if (_projectTabEl) _projectTabEl.classList.toggle("active", tab === "project");
+
+  // Hide all tab content
+  if (_treeEl) _treeEl.style.display = "none";
+  if (_searchEl) _searchEl.style.display = "none";
+  if (_beatPanelHost) _beatPanelHost.style.display = "none";
+  if (_projectHost) _projectHost.style.display = "none";
+  cleanupBeatPanel();
 
   if (tab === "maps") {
     if (_treeEl) _treeEl.style.display = "";
-    if (_searchEl) _searchEl.parentElement.querySelector(".ide-map-search").style.display = "";
-    if (_beatPanelHost) _beatPanelHost.style.display = "none";
-    cleanupBeatPanel();
-  } else {
-    if (_treeEl) _treeEl.style.display = "none";
-    // Hide search bar in beats mode
-    if (_searchEl) _searchEl.style.display = "none";
+    if (_searchEl) _searchEl.style.display = "";
+  } else if (tab === "beats") {
     if (_beatPanelHost) {
       _beatPanelHost.style.display = "flex";
       initBeatPanel(_beatPanelHost);
+    }
+  } else if (tab === "project") {
+    if (_projectHost) {
+      _projectHost.style.display = "";
+      _renderProjectTab();
     }
   }
 }
@@ -306,8 +328,9 @@ function _onMapClick(e) {
   _selectedMap = mapName;
   _renderTree();
 
-  // Persist selection
+  // Persist selection + track recent maps
   try { localStorage.setItem("torch-ide-last-map", mapName); } catch (_) {}
+  _trackRecentMap(mapName);
 
   // Dispatch to other panels
   ideEmit(IDE_MAP_SELECTED, { name: mapName, source: "tree" });
@@ -339,6 +362,133 @@ function _autoRestoreLastMap() {
     }
   } catch (_) {}
 }
+
+// ---------------------------------------------------------------------------
+// Project tab rendering
+// ---------------------------------------------------------------------------
+
+async function _renderProjectTab() {
+  if (!_projectHost) return;
+
+  _projectHost.innerHTML = `<div style="color:var(--text-dim);font-size:0.8rem">Loading...</div>`;
+
+  let status = null;
+  try {
+    const res = await api("/status");
+    if (res.ok) status = res.data;
+  } catch (_) {}
+
+  // Recent maps from localStorage
+  const recentMaps = _getRecentMaps();
+
+  let html = `<div class="ide-project-tab">`;
+
+  // --- Project info ---
+  html += `<div class="ide-project-section">`;
+  html += `<h4 class="ide-project-heading">Project</h4>`;
+  if (status) {
+    html += `<div class="ide-project-stat"><span class="ide-project-label">Name</span><span class="ide-project-value">${esc(status.project_name || "—")}</span></div>`;
+    html += `<div class="ide-project-stat"><span class="ide-project-label">TORCH</span><span class="ide-project-value">v${esc(status.torch_version || "?")}</span></div>`;
+    if (status.expansion_version && status.expansion_version !== "N/A") {
+      html += `<div class="ide-project-stat"><span class="ide-project-label">Expansion</span><span class="ide-project-value">v${esc(status.expansion_version)}</span></div>`;
+    }
+    if (status.enrolled_map_count != null) {
+      html += `<div class="ide-project-stat"><span class="ide-project-label">Maps</span><span class="ide-project-value">${status.enrolled_map_count} enrolled</span></div>`;
+    }
+    if (status.custom_map_count) {
+      html += `<div class="ide-project-stat"><span class="ide-project-label">Custom</span><span class="ide-project-value">${status.custom_map_count} maps</span></div>`;
+    }
+  } else {
+    html += `<div class="ide-project-stat" style="color:var(--text-dim)">Could not load project info</div>`;
+  }
+  html += `</div>`;
+
+  // --- Map health ---
+  if (status && status.map_health && Object.keys(status.map_health).length > 0) {
+    const h = status.map_health;
+    html += `<div class="ide-project-section">`;
+    html += `<h4 class="ide-project-heading">Health</h4>`;
+    const badges = [];
+    if (h.ok) badges.push(`<span class="ide-health-badge ok">${h.ok} ok</span>`);
+    if (h.stale) badges.push(`<span class="ide-health-badge stale">${h.stale} stale</span>`);
+    if (h.drift) badges.push(`<span class="ide-health-badge drift">${h.drift} drift</span>`);
+    if (h.orphan) badges.push(`<span class="ide-health-badge orphan">${h.orphan} orphan</span>`);
+    if (h["new"]) badges.push(`<span class="ide-health-badge new">${h["new"]} new</span>`);
+    if (h.missing_workspace) badges.push(`<span class="ide-health-badge orphan">${h.missing_workspace} missing</span>`);
+    html += `<div class="ide-health-row">${badges.join("")}</div>`;
+    html += `</div>`;
+  }
+
+  // --- Recent maps ---
+  if (recentMaps.length > 0) {
+    html += `<div class="ide-project-section">`;
+    html += `<h4 class="ide-project-heading">Recent Maps</h4>`;
+    for (const m of recentMaps) {
+      html += `<div class="ide-project-recent" data-map="${esc(m)}">${esc(_formatMapName(m))}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // --- Quick links ---
+  html += `<div class="ide-project-section">`;
+  html += `<h4 class="ide-project-heading">Quick Links</h4>`;
+  html += `<div class="ide-project-link" data-tool="settings">Settings</div>`;
+  html += `<div class="ide-project-link" data-tool="project">Project Config</div>`;
+  html += `<div class="ide-project-link" data-tool="scorch">SCORCH</div>`;
+  html += `<div class="ide-project-link" data-tool="assets">Asset Browser</div>`;
+  html += `<div class="ide-project-link" data-tool="explorer">Map Graph</div>`;
+  html += `</div>`;
+
+  html += `</div>`;
+  _projectHost.innerHTML = html;
+
+  // Wire recent map clicks
+  _projectHost.querySelectorAll(".ide-project-recent").forEach(el => {
+    el.addEventListener("click", () => {
+      const mapName = el.dataset.map;
+      _selectedMap = mapName;
+      _switchTab("maps");
+      _renderTree();
+      ideEmit(IDE_MAP_SELECTED, { name: mapName, source: "project" });
+    });
+  });
+
+  // Wire quick links
+  const toolMap = {
+    settings: ["Settings", () => import("./views/settings.js")],
+    project: ["Project", () => import("./views/project.js")],
+    scorch: ["SCORCH", () => import("./views/scorch.js")],
+    assets: ["Assets", () => import("./views/assets.js")],
+    explorer: ["Map Graph", () => import("./views/explorer.js")],
+  };
+  _projectHost.querySelectorAll(".ide-project-link").forEach(el => {
+    el.addEventListener("click", () => {
+      const entry = toolMap[el.dataset.tool];
+      if (entry) openToolModal(entry[0], entry[1]);
+    });
+  });
+}
+
+function _getRecentMaps() {
+  // Track recent maps by storing the last 8 unique selections
+  try {
+    const raw = localStorage.getItem("torch-ide-recent-maps");
+    return raw ? JSON.parse(raw).slice(0, 8) : [];
+  } catch (_) { return []; }
+}
+
+function _trackRecentMap(mapName) {
+  try {
+    let recent = _getRecentMaps().filter(m => m !== mapName);
+    recent.unshift(mapName);
+    if (recent.length > 8) recent = recent.slice(0, 8);
+    localStorage.setItem("torch-ide-recent-maps", JSON.stringify(recent));
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
 
 function _formatGroupName(name) {
   // gMapGroup_Foo -> Foo

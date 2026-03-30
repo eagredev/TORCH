@@ -49,6 +49,7 @@ export async function render(container) {
     <div class="dash-header">
       <h1>Loading...</h1>
       <p class="dash-subtitle"></p>
+      <a href="#/studio" class="dash-studio-btn">Open Studio</a>
     </div>
 
     <div class="dash-lan-badge" style="display:none"></div>

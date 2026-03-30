@@ -8,6 +8,7 @@ import { esc } from "../utils.js";
 import { renderStudioNavbar } from "../studioNav.js";
 import { renderNpcDetail, cleanupNpcDetail, wrapGbaText, renderGbaPreview } from "./npcDetail.js";
 import { openNpcWizard } from "./npcWizard.js";
+import { getMapFromHashOrContext } from "../viewContext.js";
 
 // === Module State ===
 let cachedMaps = null;
@@ -699,15 +700,15 @@ export async function render(container) {
   injectCSS();
 
   const hash = window.location.hash || "";
-  // Match #/npcs/MapName/123 (detail view)
+  // Match #/npcs/MapName/123 (detail view — hash-only, needs both parts)
   const detailMatch = hash.match(/^#\/npcs\/([A-Za-z0-9_]+)\/(\d+)$/);
-  // Match #/npcs/MapName (card grid)
-  const mapMatch = hash.match(/^#\/npcs\/([A-Za-z0-9_]+)$/);
+  // Map name from hash or IDE view context
+  const mapName = getMapFromHashOrContext();
 
   if (detailMatch) {
     await renderNpcDetail(container, detailMatch[1], detailMatch[2]);
-  } else if (mapMatch) {
-    await renderMapNpcs(container, mapMatch[1]);
+  } else if (mapName) {
+    await renderMapNpcs(container, mapName);
   } else {
     await renderMapBrowser(container);
   }

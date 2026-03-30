@@ -6,6 +6,7 @@
 import { api, postApi } from "../app.js";
 import { esc } from "../utils.js";
 import { renderStudioNavbar } from "../studioNav.js";
+import { getMapFromHashOrContext } from "../viewContext.js";
 
 let debounceTimer = null;
 let cachedMaps = null;
@@ -641,10 +642,9 @@ export async function render(container) {
     document.head.appendChild(styleEl);
   }
 
-  const hash = window.location.hash || "";
-  const detailMatch = hash.match(/^#\/shops\/(.+)$/);
-  if (detailMatch) {
-    await renderDetail(container, decodeURIComponent(detailMatch[1]));
+  const mapName = getMapFromHashOrContext();
+  if (mapName) {
+    await renderDetail(container, mapName);
     return;
   }
   await renderList(container);

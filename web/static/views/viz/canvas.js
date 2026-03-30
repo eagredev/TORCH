@@ -7,8 +7,8 @@
  */
 
 import {
-  state, on, off, setCameraLocked,
-  BEAT_CHANGED, FRAMES_UPDATED, CHAIN_CHANGED,
+  state, on, off, setCameraLocked, setNpcPatrolIndex,
+  BEAT_CHANGED, FRAMES_UPDATED, CHAIN_CHANGED, PATROL_MODE_CHANGED,
 } from "./state.js";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +76,7 @@ let _actorRects = [];  // [{name, x, y, w, h}, ...] for hit-testing
 let _beatHandler = null;
 let _framesHandler = null;
 let _chainHandler = null;
+let _patrolHandler = null;
 let _resizeObserver = null;
 let _boundMouseDown = null;
 let _boundMouseMove = null;
@@ -109,6 +110,7 @@ export function init(canvasEl, overlayEl) {
     _renderFrame();
   });
   _chainHandler = on(CHAIN_CHANGED, () => _renderFrame());
+  _patrolHandler = on(PATROL_MODE_CHANGED, () => _renderFrame());
 
   // Mouse handlers
   _boundClick = e => _onCanvasClick(e);
@@ -144,6 +146,7 @@ export function cleanup() {
   if (_beatHandler) { off(BEAT_CHANGED, _beatHandler); _beatHandler = null; }
   if (_framesHandler) { off(FRAMES_UPDATED, _framesHandler); _framesHandler = null; }
   if (_chainHandler) { off(CHAIN_CHANGED, _chainHandler); _chainHandler = null; }
+  if (_patrolHandler) { off(PATROL_MODE_CHANGED, _patrolHandler); _patrolHandler = null; }
 
   if (_canvas) {
     _canvas.removeEventListener("click", _boundClick);
@@ -338,6 +341,11 @@ function _renderFrame() {
 
   // Draw chain position ranges (before actors, so actors render on top)
   _drawChainRanges(ctx, ox, oy, z);
+
+  // Draw patrol position tiles when patrol mode is active
+  if (state.patrolMode) {
+    _drawPatrolTiles(ctx, ox, oy, z);
+  }
 
   // Draw actors
   _actorRects = [];
@@ -561,6 +569,43 @@ function _roundRect(ctx, x, y, w, h, r) {
 }
 
 // ---------------------------------------------------------------------------
+// Patrol tile rendering (NPC starting position picker)
+// ---------------------------------------------------------------------------
+
+function _drawPatrolTiles(ctx, ox, oy, zoom) {
+  const ti = state.triggerInfo;
+  if (!ti || !ti.npc_positions || ti.npc_positions.length <= 1) return;
+
+  const positions = ti.npc_positions;
+  const selectedIdx = state.npcPatrolIndex || 0;
+
+  ctx.save();
+  if (zoom !== 1.0) ctx.scale(zoom, zoom);
+  const azOx = zoom === 1.0 ? ox : ox / zoom;
+  const azOy = zoom === 1.0 ? oy : oy / zoom;
+
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i];
+    const sx = pos.x * TILE_PX - azOx;
+    const sy = pos.y * TILE_PX - azOy;
+
+    if (i === selectedIdx) {
+      ctx.fillStyle = "rgba(212, 160, 23, 0.45)";
+      ctx.strokeStyle = "rgba(212, 160, 23, 0.9)";
+      ctx.lineWidth = 2;
+    } else {
+      ctx.fillStyle = "rgba(137, 180, 250, 0.25)";
+      ctx.strokeStyle = "rgba(137, 180, 250, 0.6)";
+      ctx.lineWidth = 1;
+    }
+    ctx.fillRect(sx, sy, TILE_PX, TILE_PX);
+    ctx.strokeRect(sx, sy, TILE_PX, TILE_PX);
+  }
+  ctx.restore();
+}
+
+
+// ---------------------------------------------------------------------------
 // Chain position range rendering
 // ---------------------------------------------------------------------------
 
@@ -723,6 +768,26 @@ function _onCanvasClick(e) {
       _invalidateGrid();
     }
     _renderFrame();
+    return;
+  }
+
+  // Patrol tile click detection
+  if (state.patrolMode && state.triggerInfo && state.triggerInfo.npc_positions) {
+    const positions = state.triggerInfo.npc_positions;
+    const z = _zoom;
+    const rawOx = state.cameraLocked ? _viewport.ox : -_panX;
+    const rawOy = state.cameraLocked ? _viewport.oy : -_panY;
+    // Convert click position to world tile coordinates
+    const worldX = cx / z + rawOx;
+    const worldY = cy / z + rawOy;
+    const tileX = Math.floor(worldX / TILE_PX);
+    const tileY = Math.floor(worldY / TILE_PX);
+    for (let i = 0; i < positions.length; i++) {
+      if (positions[i].x === tileX && positions[i].y === tileY) {
+        setNpcPatrolIndex(i);
+        return;
+      }
+    }
   }
 }
 
