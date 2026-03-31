@@ -23,6 +23,12 @@ const TYPE_COLOURS = {
   Steel: "#B8B8D0", Fairy: "#EE99AC",
 };
 
+const ALL_TYPES = Object.keys(TYPE_COLOURS);
+const GEN_RANGES = {
+  1: [1, 151], 2: [152, 251], 3: [252, 386], 4: [387, 493],
+  5: [494, 649], 6: [650, 721], 7: [722, 809], 8: [810, 905],
+  9: [906, 1025],
+};
 const STAT_LABELS = ["HP", "Atk", "Def", "SpA", "SpD", "Spe"];
 const STAT_KEYS = ["hp", "atk", "def", "spa", "spd", "spe"];
 const PAGE_SIZE = 40;
@@ -38,6 +44,8 @@ let _cachedList = null;
 let _filtered = [];
 let _rendered = 0;
 let _searchQuery = "";
+let _activeTypes = [];   // max 2 types (AND logic)
+let _activeGens = [];    // multi-select (OR logic)
 let _debounceTimer = null;
 let _detailCache = {};
 let _observer = null;
@@ -99,11 +107,33 @@ export function initDexWidget(containerEl) {
   // 2. Create the floating panel
   _panelEl = document.createElement("div");
   _panelEl.className = "dex-widget-panel";
+  // Build type chips HTML
+  const typeChipsHtml = ALL_TYPES.map(t =>
+    `<span class="dex-widget-chip dex-widget-type-chip" data-type="${t}" style="background:${TYPE_COLOURS[t]}">${t.slice(0, 3)}</span>`
+  ).join("");
+  // Build gen chips HTML
+  const genChipsHtml = Object.keys(GEN_RANGES).map(g =>
+    `<span class="dex-widget-chip dex-widget-gen-chip" data-gen="${g}">${g}</span>`
+  ).join("");
+
   _panelEl.innerHTML = `
     <div class="dex-widget-header">
       <span class="dex-widget-title">Dex</span>
       <input type="text" class="dex-widget-search" placeholder="Search species..." autocomplete="off">
+      <button class="dex-widget-filter-toggle" title="Toggle filters">\u25BC</button>
       <button class="dex-widget-close">\u00d7</button>
+    </div>
+    <div class="dex-widget-filters">
+      <div class="dex-widget-filter-row">
+        <span class="dex-widget-filter-label">Type</span>
+        <span class="dex-widget-chip dex-widget-type-clear active">All</span>
+        ${typeChipsHtml}
+      </div>
+      <div class="dex-widget-filter-row">
+        <span class="dex-widget-filter-label">Gen</span>
+        <span class="dex-widget-chip dex-widget-gen-clear active">All</span>
+        ${genChipsHtml}
+      </div>
     </div>
     <div class="dex-widget-body"></div>`;
 
@@ -122,6 +152,49 @@ export function initDexWidget(containerEl) {
       _searchQuery = searchInput.value.trim();
       _applyFilters();
     }, 200);
+  });
+
+  // Filter toggle button
+  const filterToggle = _panelEl.querySelector(".dex-widget-filter-toggle");
+  const filtersEl = _panelEl.querySelector(".dex-widget-filters");
+  filterToggle.addEventListener("click", () => {
+    const show = !filtersEl.classList.contains("open");
+    filtersEl.classList.toggle("open", show);
+    filterToggle.textContent = show ? "\u25B2" : "\u25BC";
+    filterToggle.title = show ? "Hide filters" : "Toggle filters";
+  });
+
+  // Type chips — max 2, AND logic
+  _panelEl.querySelectorAll(".dex-widget-type-chip, .dex-widget-type-clear").forEach(chip => {
+    chip.addEventListener("click", () => {
+      if (chip.classList.contains("dex-widget-type-clear")) {
+        _activeTypes = [];
+      } else {
+        const t = chip.dataset.type;
+        const idx = _activeTypes.indexOf(t);
+        if (idx >= 0) _activeTypes.splice(idx, 1);
+        else if (_activeTypes.length < 2) _activeTypes.push(t);
+        else { _activeTypes.shift(); _activeTypes.push(t); }
+      }
+      _syncTypeChips();
+      _applyFilters();
+    });
+  });
+
+  // Gen chips — multi-select, OR logic
+  _panelEl.querySelectorAll(".dex-widget-gen-chip, .dex-widget-gen-clear").forEach(chip => {
+    chip.addEventListener("click", () => {
+      if (chip.classList.contains("dex-widget-gen-clear")) {
+        _activeGens = [];
+      } else {
+        const g = parseInt(chip.dataset.gen, 10);
+        const idx = _activeGens.indexOf(g);
+        if (idx >= 0) _activeGens.splice(idx, 1);
+        else _activeGens.push(g);
+      }
+      _syncGenChips();
+      _applyFilters();
+    });
   });
 
   // Escape key closes panel
@@ -149,6 +222,8 @@ export function cleanupDexWidget() {
   _filtered = [];
   _rendered = 0;
   _searchQuery = "";
+  _activeTypes = [];
+  _activeGens = [];
   _detailCache = {};
   _spriteQueue = [];
   _spriteActive = 0;
@@ -210,8 +285,47 @@ function _applyFilters() {
     const q = _searchQuery.toLowerCase();
     result = result.filter(sp => sp.name.toLowerCase().includes(q));
   }
+  // Type filters (AND — must have ALL selected types)
+  if (_activeTypes.length) {
+    result = result.filter(sp => {
+      const spTypes = (sp.types || []).map(t => t.toLowerCase());
+      return _activeTypes.every(f => spTypes.includes(f.toLowerCase()));
+    });
+  }
+  // Gen filters (OR — match any selected gen)
+  if (_activeGens.length) {
+    result = result.filter(sp => {
+      const num = sp.nat_dex_num || 0;
+      return _activeGens.some(g => {
+        const [lo, hi] = GEN_RANGES[g] || [0, 0];
+        return num >= lo && num <= hi;
+      });
+    });
+  }
   _filtered = result;
   _renderList();
+}
+
+function _syncTypeChips() {
+  if (!_panelEl) return;
+  _panelEl.querySelectorAll(".dex-widget-type-chip, .dex-widget-type-clear").forEach(c => {
+    if (c.classList.contains("dex-widget-type-clear")) {
+      c.classList.toggle("active", _activeTypes.length === 0);
+    } else {
+      c.classList.toggle("active", _activeTypes.includes(c.dataset.type));
+    }
+  });
+}
+
+function _syncGenChips() {
+  if (!_panelEl) return;
+  _panelEl.querySelectorAll(".dex-widget-gen-chip, .dex-widget-gen-clear").forEach(c => {
+    if (c.classList.contains("dex-widget-gen-clear")) {
+      c.classList.toggle("active", _activeGens.length === 0);
+    } else {
+      c.classList.toggle("active", _activeGens.includes(parseInt(c.dataset.gen, 10)));
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
