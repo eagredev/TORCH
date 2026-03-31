@@ -77,6 +77,7 @@ export function initContextPanel(container) {
   registerTab("flags", "Flags", () => import("./tabs/flagsTab.js"));
   registerTab("shops", "Shops", () => import("./tabs/shopsTab.js"));
   registerTab("trainers", "Trainers", () => import("./tabs/trainersTab.js"));
+  registerTab("triggers", "Trigs", () => import("./tabs/triggersTab.js"));
 
   // Initialize tab system
   initTabs(_tabBarEl, _bodyEl);

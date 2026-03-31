@@ -2469,3 +2469,78 @@ main:has(.ide-root) {
   color: var(--text-muted, #888);
   font-size: 0.75rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Triggers tab
+   --------------------------------------------------------------------------- */
+
+.ide-trig-toolbar {
+  padding: 0.2rem 0;
+  margin-bottom: 0.3rem;
+}
+.ide-trig-add-btn {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(137,180,250,0.12);
+  color: #89b4fa;
+  border: 1px solid rgba(137,180,250,0.25);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ide-trig-add-btn:hover {
+  background: rgba(137,180,250,0.22);
+}
+.ide-trig-list {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+.ide-trig-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.15rem;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.ide-trig-row:hover { background: var(--surface-2, #1a1a1a); }
+.ide-trig-row.highlighted { background: var(--surface-2, #1a1a1a); outline: 1px solid var(--accent, #d4a017); }
+.ide-trig-icon {
+  width: 22px; height: 22px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(249,226,175,0.15);
+  color: #f9e2af;
+  border-radius: 3px;
+  font-size: 0.7rem; font-weight: 700;
+}
+.ide-trig-info { min-width: 0; flex: 1; }
+.ide-trig-label {
+  font-size: 0.72rem;
+  color: var(--text-primary, #eee);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ide-trig-meta {
+  font-size: 0.62rem;
+  color: var(--text-dim, #666);
+}
+.ide-trig-del {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-dim, #666); font-size: 0.9rem;
+  padding: 0 0.2rem;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ide-trig-row:hover .ide-trig-del { opacity: 1; }
+.ide-trig-del:hover { color: #f38ba8; }
+.ide-trig-footer {
+  margin-top: 0.3rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--border-subtle, #2a2a2a);
+  font-size: 0.65rem;
+  color: var(--text-dim, #666);
+}

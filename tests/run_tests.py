@@ -82,6 +82,8 @@ from torch.tests import (
     test_custom_stamps,
     test_api_stamps,
     test_collision,
+    test_browser_launch,
+    test_api_triggers,
 )
 
 _SUITES = [
@@ -172,6 +174,8 @@ _SUITES = [
     ("custom_stamps",      test_custom_stamps),
     ("api_stamps",         test_api_stamps),
     ("collision",          test_collision),
+    ("browser_launch",     test_browser_launch),
+    ("api_triggers",       test_api_triggers),
 ]
 
 

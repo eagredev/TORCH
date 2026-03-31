@@ -28,6 +28,7 @@ let showSnapshots = false;
 let _relockHandler = null;
 let removing = false;              // removal in progress
 let phoenixExecuting = false;      // phoenix in progress
+let _abortController = null;       // AbortController for cancellable loading
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -523,6 +524,19 @@ function injectCSS() {
       color: var(--text-dim);
       font-size: 0.85rem;
     }
+    .scorch-cancel-btn {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.3rem 0.8rem;
+      font-size: 0.8rem;
+      background: none;
+      color: var(--text-dim);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .scorch-cancel-btn:hover { color: #ccc; border-color: var(--border-emphasis); }
     .scorch-empty {
       text-align: center;
       padding: 2rem;
@@ -583,22 +597,25 @@ const CAT_LABELS = {
 // Data loading
 // ---------------------------------------------------------------------------
 
-async function loadPreflight() {
+async function loadPreflight(signal) {
   try {
-    const resp = await api("/scorch/status");
+    const res = await fetch("/api/scorch/status", { signal });
+    const resp = await res.json();
     if (resp.ok) {
       preflightStatus = resp.data;
     } else {
       preflightStatus = { ready: false, issues: [resp.error || "Unknown error"] };
     }
   } catch (e) {
+    if (e.name === "AbortError") throw e;
     preflightStatus = { ready: false, issues: [e.message] };
   }
 }
 
-async function loadFullScan() {
+async function loadFullScan(signal) {
   try {
-    const resp = await api("/scorch/scan");
+    const res = await fetch("/api/scorch/scan", { signal });
+    const resp = await res.json();
     if (resp.ok) {
       scanData = resp.data;
       // Index items by category for quick access
@@ -611,7 +628,8 @@ async function loadFullScan() {
     } else {
       scanData = null;
     }
-  } catch (_) {
+  } catch (e) {
+    if (e.name === "AbortError") throw e;
     scanData = null;
   }
 }
@@ -628,15 +646,17 @@ async function loadCategoryItems(cat) {
   }
 }
 
-async function loadPhoenixPlan() {
+async function loadPhoenixPlan(signal) {
   try {
-    const resp = await api("/scorch/phoenix/plan");
+    const res = await fetch("/api/scorch/phoenix/plan", { signal });
+    const resp = await res.json();
     if (resp.ok) {
       phoenixPlan = resp.data;
     } else {
       phoenixPlan = { errors: [resp.error], summary: {}, ready: false };
     }
   } catch (e) {
+    if (e.name === "AbortError") throw e;
     phoenixPlan = { errors: [e.message], summary: {}, ready: false };
   }
 }
@@ -697,7 +717,7 @@ function renderAll() {
 
 function renderPreflight() {
   if (!preflightStatus) {
-    return `<div class="scorch-loading">Checking project...</div>`;
+    return `<div class="scorch-loading">Checking project...<br><button class="scorch-cancel-btn" data-action="cancel-load">Cancel</button></div>`;
   }
   const { ready, issues } = preflightStatus;
   if (issues.length === 0) {
@@ -719,7 +739,7 @@ function renderPreflight() {
 
 function renderSingeTab() {
   if (!scanData) {
-    return `<div class="scorch-loading">Scanning vanilla content... this may take a few seconds.</div>`;
+    return `<div class="scorch-loading">Scanning vanilla content... this may take a few seconds.<br><button class="scorch-cancel-btn" data-action="cancel-load">Cancel</button></div>`;
   }
 
   if (selectedCategory) {
@@ -862,7 +882,7 @@ function renderCategoryDetail(catId) {
 
 function renderPhoenixTab() {
   if (!phoenixPlan) {
-    return `<div class="scorch-loading">Loading Phoenix plan...</div>`;
+    return `<div class="scorch-loading">Loading Phoenix plan...<br><button class="scorch-cancel-btn" data-action="cancel-load">Cancel</button></div>`;
   }
 
   let html = "";
@@ -1195,19 +1215,56 @@ async function doRestore(path, type) {
 
 
 // ---------------------------------------------------------------------------
+// Cancel navigation helper
+// ---------------------------------------------------------------------------
+
+function cancelAndGoBack() {
+  if (_abortController) {
+    _abortController.abort();
+    _abortController = null;
+  }
+  // Reset partial state from aborted loads
+  preflightStatus = null;
+  scanData = null;
+  categoryItems = {};
+  phoenixPlan = null;
+  // Navigate back to dashboard
+  window.location.hash = "#/";
+}
+
+function bindCancelButton() {
+  if (!_container) return;
+  _container.querySelectorAll("[data-action='cancel-load']").forEach(btn => {
+    btn.addEventListener("click", cancelAndGoBack);
+  });
+}
+
+
+// ---------------------------------------------------------------------------
 // Event binding
 // ---------------------------------------------------------------------------
 
 function bindEvents() {
   if (!_container) return;
 
+  // Cancel buttons in loading states
+  bindCancelButton();
+
   // Tab clicks
   _container.querySelectorAll(".scorch-tab").forEach(tab => {
     tab.addEventListener("click", async () => {
       activeTab = tab.dataset.tab;
       if (activeTab === "phoenix" && !phoenixPlan) {
-        renderAll(); // show loading
-        await loadPhoenixPlan();
+        renderAll(); // show loading (with cancel button)
+        _abortController = new AbortController();
+        const signal = _abortController.signal;
+        try {
+          await loadPhoenixPlan(signal);
+          _abortController = null;
+        } catch (e) {
+          if (e.name === "AbortError") return;
+          _abortController = null;
+        }
       }
       renderAll();
     });
@@ -1326,18 +1383,31 @@ function bindEvents() {
 export async function render(container) {
   injectCSS();
   _container = container;
-  container.innerHTML = `<div class="scorch-loading">Loading SCORCH...</div>`;
+  container.innerHTML = `<div class="scorch-loading">Loading SCORCH...<br><button class="scorch-cancel-btn" data-action="cancel-load">Cancel</button></div>`;
+  bindCancelButton();
+
+  // Create abort controller for cancellable loading
+  _abortController = new AbortController();
+  const signal = _abortController.signal;
 
   try {
     // Load preflight + full scan in parallel
-    await Promise.all([loadPreflight(), loadFullScan()]);
+    await Promise.all([loadPreflight(signal), loadFullScan(signal)]);
+    _abortController = null;
     renderAll();
   } catch (err) {
+    if (err.name === "AbortError") return; // user cancelled — navigation already handled
+    _abortController = null;
     container.innerHTML = `<article><p style="color:var(--status-error)">${esc(err.message)}</p></article>`;
   }
 }
 
 export function cleanup() {
+  // Abort any in-flight loading fetches
+  if (_abortController) {
+    _abortController.abort();
+    _abortController = null;
+  }
   _container = null;
   activeTab = "singe";
   preflightStatus = null;

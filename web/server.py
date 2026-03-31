@@ -177,15 +177,21 @@ def start_gui_server(game_path, project_dir, settings, proj_name):
 
     local_url = f"http://127.0.0.1:{port}/"
     gui_mode = settings.get("gui_mode", "standalone")
+    browser_proc = None
     try:
         from torch.web.browser_launch import launch_browser
-        launch_browser(local_url, mode=gui_mode)
+        browser_proc = launch_browser(local_url, mode=gui_mode)
     except Exception:
         webbrowser.open_new(local_url)
 
     interactive = sys.stdin.isatty()
     if interactive:
         _print_startup_banner(port, lan_mode, lan_ip, settings)
+
+    # In standalone mode with a tracked browser process, also watch for
+    # the browser window closing so we can auto-shutdown the server.
+    if browser_proc is not None:
+        _watch_browser_process(browser_proc, server)
 
     try:
         if interactive:
@@ -240,6 +246,24 @@ def _select_stdin(timeout):
         return readable
     except (ValueError, OSError):
         return []
+
+
+def _watch_browser_process(proc, server):
+    """Spawn a daemon thread that waits for the browser process to exit.
+
+    When the browser window closes (process exits), the server shutdown
+    event is set so the main thread can clean up.
+    """
+    def _watcher():
+        try:
+            proc.wait()
+        except (OSError, KeyboardInterrupt):
+            pass
+        # Browser exited — signal shutdown
+        server.shutdown_event.set()
+
+    t = threading.Thread(target=_watcher, daemon=True)
+    t.start()
 
 
 _AUTO_SHUTDOWN_GRACE = 3  # seconds to wait before shutting down

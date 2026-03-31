@@ -44,7 +44,9 @@ Usage:
     torch upgrade                Upgrade pokeemerald-expansion to a newer version
     torch upgrade --check        Show current version and available updates
     torch upgrade --to X.Y.Z    Upgrade to a specific version
-    torch gui                    Launch the TORCH web GUI in your browser
+    torch gui                    Launch the TORCH web GUI (standalone window)
+    torch gui --app              Force standalone mode (fail if no browser)
+    torch gui --browser          Force regular browser mode (no standalone)
 """
 # TORCH_MODULE: Entry Point
 # TORCH_GROUP: Core
@@ -2267,7 +2269,7 @@ def _cmd_gui(game_path, project_dir, settings, proj_name, args=None):
 
     # Parse optional CLI flags (session-only overrides, don't modify config)
     extra = args[1:] if args and len(args) > 1 else []
-    if "--lan" in extra or "--port" in extra:
+    if any(f in extra for f in ("--lan", "--port", "--app", "--browser")):
         settings = dict(settings)  # shallow copy to avoid mutating caller
     if "--lan" in extra:
         settings["_lan_override"] = True
@@ -2279,6 +2281,23 @@ def _cmd_gui(game_path, project_dir, settings, proj_name, args=None):
             except ValueError:
                 print(f"  ERROR: Invalid port: {extra[idx + 1]}")
                 sys.exit(1)
+    if "--app" in extra:
+        # Force standalone mode -- fail if no suitable browser found
+        try:
+            from torch.web.browser_launch import find_app_browser
+            path, name = find_app_browser()
+            if not path:
+                print("  ERROR: No Chromium or Firefox browser found for "
+                      "standalone mode.")
+                print("  Install Chromium, Google Chrome, Brave, Edge, "
+                      "or Vivaldi, then retry.")
+                sys.exit(1)
+            print(f"  Standalone mode: {name}")
+        except ImportError:
+            pass
+        settings["gui_mode"] = "standalone"
+    elif "--browser" in extra:
+        settings["gui_mode"] = "browser"
 
     start_gui_server(game_path, project_dir, settings, proj_name)
 

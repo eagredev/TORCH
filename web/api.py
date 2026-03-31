@@ -6428,6 +6428,7 @@ import torch.web.api_templates  # noqa: E402,F401
 import torch.web.api_versions  # noqa: E402,F401
 import torch.web.api_map_render  # noqa: E402,F401
 import torch.web.api_events  # noqa: E402,F401
+import torch.web.api_triggers  # noqa: E402,F401
 import torch.web.api_music  # noqa: E402,F401
 import torch.web.api_stamps  # noqa: E402,F401
 import torch.web.collision  # noqa: E402,F401

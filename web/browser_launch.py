@@ -3,14 +3,14 @@
 """Browser launcher for standalone application presentation.
 
 Detects the best available browser and launches TORCH in a chrome-less
-window — no tab bar, no address bar, no bookmarks.  Falls back to the
+window -- no tab bar, no address bar, no bookmarks.  Falls back to the
 system default browser if no supported browser is found.
 
 Supported strategies (tried in order):
-  1. Chromium / Google Chrome  — ``--app=URL`` flag (simplest)
-  2. Firefox Flatpak           — dedicated profile with userChrome.css
-  3. Native Firefox            — same profile approach, different path
-  4. Fallback                  — ``webbrowser.open_new(url)``
+  1. Chromium / Google Chrome  -- ``--app=URL`` flag (simplest)
+  2. Firefox Flatpak           -- dedicated profile with userChrome.css
+  3. Native Firefox            -- same profile approach, different path
+  4. Fallback                  -- ``webbrowser.open_new(url)``
 """
 
 import os
@@ -25,7 +25,7 @@ import webbrowser
 
 # CSS to hide all browser chrome (tabs, address bar, bookmarks, title bar)
 _USER_CHROME_CSS = """\
-/* TORCH Studio — hide browser chrome for standalone mode */
+/* TORCH Studio -- hide browser chrome for standalone mode */
 #TabsToolbar { display: none !important; }
 #nav-bar { display: none !important; }
 #PersonalToolbar { display: none !important; }
@@ -106,14 +106,51 @@ def _file_outdated(path, expected_content):
 # Browser detection
 # ---------------------------------------------------------------------------
 
+# Chromium-family browsers that support --app mode, in preference order
+_CHROMIUM_NAMES = (
+    "chromium-browser", "chromium", "google-chrome-stable",
+    "google-chrome", "brave-browser", "microsoft-edge",
+    "microsoft-edge-stable", "vivaldi", "vivaldi-stable",
+)
+
+# Flatpak app IDs for Chromium-family browsers
+_CHROMIUM_FLATPAK_IDS = (
+    "org.chromium.Chromium",
+    "com.google.Chrome",
+    "com.brave.Browser",
+    "com.microsoft.Edge",
+    "com.vivaldi.Vivaldi",
+)
+
+# Common Flatpak export directories (where Flatpak symlinks live)
+_FLATPAK_BIN_DIRS = (
+    os.path.expanduser("~/.local/share/flatpak/exports/bin"),
+    "/var/lib/flatpak/exports/bin",
+)
+
+
 def _find_chromium():
-    """Find a Chromium-based browser binary, or None."""
-    for name in ("chromium-browser", "chromium", "google-chrome-stable",
-                 "google-chrome", "brave-browser"):
+    """Find a Chromium-based browser binary, or None.
+
+    Checks PATH first, then Flatpak export directories.
+    Returns (binary_path, browser_name) or (None, None).
+    """
+    # 1. Check PATH via shutil.which
+    for name in _CHROMIUM_NAMES:
         path = shutil.which(name)
         if path:
-            return path
-    return None
+            return path, name
+
+    # 2. Check Flatpak export bins (SteamOS / immutable distros)
+    for bin_dir in _FLATPAK_BIN_DIRS:
+        if not os.path.isdir(bin_dir):
+            continue
+        for app_id in _CHROMIUM_FLATPAK_IDS:
+            candidate = os.path.join(bin_dir, app_id)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate, app_id
+
+    return None, None
 
 
 def _has_firefox_flatpak():
@@ -138,16 +175,29 @@ def _find_native_firefox():
 # ---------------------------------------------------------------------------
 
 def _launch_chromium(binary, url):
-    """Launch Chromium in app mode (no browser chrome)."""
-    subprocess.Popen(
-        [binary, f"--app={url}", "--class=torch-studio"],
+    """Launch Chromium in app mode (no browser chrome).
+
+    Returns the Popen process handle for lifecycle tracking.
+    """
+    args = [
+        binary,
+        f"--app={url}",
+        "--window-size=1280,800",
+        "--disable-extensions",
+        "--class=torch-studio",
+    ]
+    proc = subprocess.Popen(
+        args,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    return True
+    return proc
 
 
 def _launch_firefox_flatpak(url):
-    """Launch Firefox Flatpak with the TORCH profile."""
+    """Launch Firefox Flatpak with the TORCH profile.
+
+    Returns the Popen process handle for lifecycle tracking.
+    """
     host_path = _firefox_flatpak_profile_path()
     _ensure_firefox_profile(host_path)
 
@@ -158,31 +208,54 @@ def _launch_firefox_flatpak(url):
         os.path.expanduser("~"), ".mozilla", "firefox", _PROFILE_DIR_NAME,
     )
 
-    subprocess.Popen(
+    proc = subprocess.Popen(
         ["flatpak", "run", "org.mozilla.firefox",
          "--new-instance", "-profile", sandbox_path,
          "--new-window", url],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    return True
+    return proc
 
 
 def _launch_native_firefox(binary, url):
-    """Launch native Firefox with the TORCH profile."""
+    """Launch native Firefox with the TORCH profile.
+
+    Returns the Popen process handle for lifecycle tracking.
+    """
     profile_path = _firefox_native_profile_path()
     _ensure_firefox_profile(profile_path)
 
-    subprocess.Popen(
+    proc = subprocess.Popen(
         [binary, "--new-instance", "-profile", profile_path,
          "--new-window", url],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    return True
+    return proc
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def find_app_browser():
+    """Detect the best available browser for standalone mode.
+
+    Returns (browser_path, browser_name) or (None, None) if no suitable
+    browser is found.  Checks Chromium-family first, then Firefox.
+    """
+    path, name = _find_chromium()
+    if path:
+        return path, name
+
+    if _has_firefox_flatpak():
+        return "flatpak:org.mozilla.firefox", "Firefox Flatpak"
+
+    ff = _find_native_firefox()
+    if ff:
+        return ff, "Firefox"
+
+    return None, None
+
 
 def launch_browser(url, mode="standalone"):
     """Launch TORCH in the best available browser.
@@ -194,27 +267,50 @@ def launch_browser(url, mode="standalone"):
     mode : str
         ``"standalone"`` (default) hides browser chrome.
         ``"browser"`` uses the system default browser as-is.
+
+    Returns
+    -------
+    process : subprocess.Popen or None
+        The browser process handle if launched in standalone mode
+        (useful for lifecycle tracking).  None for browser/fallback mode.
     """
     if mode != "standalone":
         webbrowser.open_new(url)
-        return
+        return None
 
-    # 1. Chromium (simplest — native --app flag)
-    chromium = _find_chromium()
+    # 1. Chromium (simplest -- native --app flag)
+    chromium, _name = _find_chromium()
     if chromium:
-        _launch_chromium(chromium, url)
-        return
+        return _launch_chromium(chromium, url)
 
     # 2. Firefox Flatpak (common on Steam Deck / SteamOS)
     if _has_firefox_flatpak():
-        _launch_firefox_flatpak(url)
-        return
+        return _launch_firefox_flatpak(url)
 
     # 3. Native Firefox
     firefox = _find_native_firefox()
     if firefox:
-        _launch_native_firefox(firefox, url)
-        return
+        return _launch_native_firefox(firefox, url)
 
-    # 4. Fallback — system default browser
+    # 4. Fallback -- system default browser
     webbrowser.open_new(url)
+    return None
+
+
+def wait_for_close(process):
+    """Wait for a browser process to exit.
+
+    Parameters
+    ----------
+    process : subprocess.Popen
+        The browser process returned by launch_browser().
+
+    Returns when the process exits (window closed).
+    Does nothing if process is None.
+    """
+    if process is None:
+        return
+    try:
+        process.wait()
+    except (OSError, KeyboardInterrupt):
+        pass

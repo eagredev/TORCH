@@ -349,8 +349,12 @@ def _resolve_sign_text(game_path, map_name, script_label):
 
 
 @api_route("GET", r"/api/map/(?P<map_name>[A-Za-z0-9_]+)/sign-text/(?P<script_label>[A-Za-z0-9_]+)")
-def handle_sign_text(handler, match, game_path, **kw):
+def handle_sign_text(handler, match, query_params):
     """Resolve a sign script label to its text content."""
+    game_path = getattr(handler.server, "game_path", "")
+    if not game_path:
+        return error_response("No game path configured", 500)
+
     map_name = match.group("map_name")
     script_label = match.group("script_label")
 
@@ -370,8 +374,12 @@ def handle_sign_text(handler, match, game_path, **kw):
 # ---------------------------------------------------------------------------
 
 @api_route("POST", r"/api/map/(?P<map_name>[A-Za-z0-9_]+)/sign-text/(?P<script_label>[A-Za-z0-9_]+)")
-def handle_sign_text_save(handler, match, game_path, **kw):
+def handle_sign_text_save(handler, match, query_params):
     """Save updated text for a basic sign script."""
+    game_path = getattr(handler.server, "game_path", "")
+    if not game_path:
+        return error_response("No game path configured", 500)
+
     map_name = match.group("map_name")
     script_label = match.group("script_label")
 

@@ -3,7 +3,7 @@
 # TORCH_GROUP: Core
 import os as _os
 
-VERSION = "0.3.9"
+VERSION = "0.4.0"
 BATTLE_VERSION = "0.2.11"
 SCRIPT_VERSION = "0.2.4"
 MAP_SCANNER_VERSION = "0.1.2"
