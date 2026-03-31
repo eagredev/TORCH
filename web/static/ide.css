@@ -1794,8 +1794,11 @@ main:has(.ide-root) {
  * Dex Status Widget — floating pop-out from status bar
  * ------------------------------------------------------------------------- */
 
+#ide-status-version {
+  margin-left: 0.4rem;
+}
 .dex-widget-toggle {
-  margin-left: 0.5rem;
+  margin-left: 0.25rem;
   padding: 0.1rem 0.5rem;
   font-size: 0.65rem;
   font-weight: 600;
@@ -2154,7 +2157,7 @@ main:has(.ide-root) {
    ========================================================================= */
 
 .music-widget-toggle {
-  margin-left: 0.5rem;
+  margin-left: auto;
   padding: 0.1rem 0.5rem;
   font-size: 0.65rem;
   font-weight: 600;
@@ -2194,7 +2197,7 @@ main:has(.ide-root) {
 .music-widget-panel {
   position: fixed;
   bottom: 28px;
-  left: 8px;
+  right: 8px;
   width: 300px;
   max-height: 500px;
   background: var(--surface-1, #111);
@@ -2310,12 +2313,15 @@ main:has(.ide-root) {
   background: none;
   border: none;
   color: var(--text-muted, #888);
-  font-size: 0.9rem;
+  font-size: 0.65rem;
+  font-family: monospace;
   cursor: pointer;
   padding: 0.2rem 0.35rem;
   border-radius: 3px;
   line-height: 1;
   transition: color 0.1s, background 0.1s;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 .music-widget-tbtn:hover {
   color: var(--text-primary, #fff);
@@ -2325,7 +2331,7 @@ main:has(.ide-root) {
   color: var(--accent, #d4a017);
 }
 #mw-play {
-  font-size: 1.1rem;
+  font-size: 0.8rem;
   padding: 0.25rem 0.5rem;
 }
 
@@ -2337,7 +2343,10 @@ main:has(.ide-root) {
   margin-left: 0.3rem;
 }
 .music-widget-vol-icon {
-  font-size: 0.75rem;
+  font-size: 0.55rem;
+  font-family: monospace;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
 }
 .music-widget-vol-slider {
   width: 50px;
@@ -2366,46 +2375,25 @@ main:has(.ide-root) {
   cursor: pointer;
 }
 
-/* Filter row */
+/* Filter row — compact single line: chips then search */
 .music-widget-filter-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.6rem;
+  gap: 3px;
+  padding: 0.25rem 0.5rem;
   border-bottom: 1px solid var(--border-subtle, #2a2a2a);
   flex-shrink: 0;
 }
-.music-widget-search {
-  flex: 1;
-  min-width: 0;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.7rem;
-  background: var(--surface-2, #1a1a1a);
-  border: 1px solid var(--border-subtle, #2a2a2a);
-  border-radius: 3px;
-  color: #eee;
-  outline: none;
-}
-.music-widget-search:focus {
-  border-color: var(--accent, #d4a017);
-}
-.music-widget-search::placeholder {
-  color: var(--text-muted, #888);
-}
-.music-widget-chips {
-  display: flex;
-  gap: 0.15rem;
-  flex-shrink: 0;
-}
 .music-widget-chip {
-  padding: 0.15rem 0.4rem;
-  font-size: 0.6rem;
+  padding: 1px 5px;
+  font-size: 0.55rem;
   font-weight: 600;
   background: var(--surface-2, #1a1a1a);
   border: 1px solid var(--border-subtle, #2a2a2a);
   border-radius: 3px;
   color: var(--text-muted, #888);
   cursor: pointer;
+  flex-shrink: 0;
 }
 .music-widget-chip:hover {
   border-color: var(--accent, #d4a017);
@@ -2415,6 +2403,25 @@ main:has(.ide-root) {
   background: var(--accent, #d4a017);
   border-color: var(--accent, #d4a017);
   color: #000;
+}
+.music-widget-search {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  font-size: 0.6rem;
+  background: var(--surface-2, #1a1a1a);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 3px;
+  color: #eee;
+  outline: none;
+  margin-left: 3px;
+}
+.music-widget-search:focus {
+  border-color: var(--accent, #d4a017);
+}
+.music-widget-search::placeholder {
+  color: var(--text-dim, #555);
+  font-size: 0.55rem;
 }
 
 /* Playlist */

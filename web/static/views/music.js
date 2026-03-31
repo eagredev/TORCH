@@ -143,12 +143,12 @@ function injectCSS() {
 // ---------------------------------------------------------------------------
 
 async function loadSongs() {
-  const res = await api("/api/music/songs");
+  const res = await api("/music/songs");
   if (res.ok) allSongs = res.data;
 }
 
 async function loadStatus() {
-  const res = await api("/api/music/status");
+  const res = await api("/music/status");
   if (res.ok) status = res.data;
 }
 

@@ -186,7 +186,7 @@ async function _loadSongs() {
   const body = _panelEl.querySelector(".music-widget-playlist");
   if (body) body.innerHTML = `<div class="music-widget-loading">Loading songs...</div>`;
 
-  const res = await api("/api/music/songs");
+  const res = await api("/music/songs");
   if (!res.ok) {
     if (body) body.innerHTML = `<div class="music-widget-loading">Error loading songs</div>`;
     return;
@@ -300,11 +300,11 @@ function _buildPanelDOM() {
   const transport = document.createElement("div");
   transport.className = "music-widget-transport";
 
-  const btnPrev = _makeTransportBtn("mw-prev", "\u23EE", "Previous", _prev);
+  const btnPrev = _makeTransportBtn("mw-prev", "<<", "Previous", _prev);
   const btnPlay = _makeTransportBtn("mw-play", "\u25B6", "Play/Pause", _togglePlay);
-  const btnNext = _makeTransportBtn("mw-next", "\u23ED", "Next", _next);
-  const btnShuffle = _makeTransportBtn("mw-shuffle", "\uD83D\uDD00", "Shuffle", _toggleShuffle);
-  const btnLoop = _makeTransportBtn("mw-loop", "\uD83D\uDD01", "Loop", _toggleLoop);
+  const btnNext = _makeTransportBtn("mw-next", ">>", "Next", _next);
+  const btnShuffle = _makeTransportBtn("mw-shuffle", "shf", "Shuffle", _toggleShuffle);
+  const btnLoop = _makeTransportBtn("mw-loop", "rpt", "Loop", _toggleLoop);
 
   if (_shuffle) btnShuffle.classList.add("active");
   if (_loop) btnLoop.classList.add("active");
@@ -320,7 +320,7 @@ function _buildPanelDOM() {
   volWrap.className = "music-widget-volume";
   const volIcon = document.createElement("span");
   volIcon.className = "music-widget-vol-icon";
-  volIcon.textContent = "\uD83D\uDD0A";
+  volIcon.textContent = "vol";
   volWrap.appendChild(volIcon);
   const volSlider = document.createElement("input");
   volSlider.type = "range";
@@ -336,14 +336,28 @@ function _buildPanelDOM() {
 
   _panelEl.appendChild(transport);
 
-  // Filter row
+  // Filter row — compact single line: chips + search
   const filterRow = document.createElement("div");
   filterRow.className = "music-widget-filter-row";
+
+  for (const cat of ["music", "sfx", "custom", "all"]) {
+    const chip = document.createElement("button");
+    chip.className = "music-widget-chip" + (cat === _activeCategory ? " active" : "");
+    chip.dataset.cat = cat;
+    chip.textContent = cat === "music" ? "Mus" : cat === "sfx" ? "SFX" : cat === "custom" ? "Cst" : "All";
+    chip.addEventListener("click", () => {
+      _activeCategory = cat;
+      _syncChips();
+      _applyFilters();
+      _renderPlaylist();
+    });
+    filterRow.appendChild(chip);
+  }
 
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.className = "music-widget-search";
-  searchInput.placeholder = "Search...";
+  searchInput.placeholder = "Filter...";
   searchInput.autocomplete = "off";
   searchInput.addEventListener("input", () => {
     clearTimeout(_debounceTimer);
@@ -354,23 +368,6 @@ function _buildPanelDOM() {
     }, 200);
   });
   filterRow.appendChild(searchInput);
-
-  const chips = document.createElement("div");
-  chips.className = "music-widget-chips";
-  for (const cat of ["music", "sfx", "custom", "all"]) {
-    const chip = document.createElement("button");
-    chip.className = "music-widget-chip" + (cat === _activeCategory ? " active" : "");
-    chip.dataset.cat = cat;
-    chip.textContent = cat === "music" ? "Music" : cat === "sfx" ? "SFX" : cat === "custom" ? "Custom" : "All";
-    chip.addEventListener("click", () => {
-      _activeCategory = cat;
-      _syncChips();
-      _applyFilters();
-      _renderPlaylist();
-    });
-    chips.appendChild(chip);
-  }
-  filterRow.appendChild(chips);
   _panelEl.appendChild(filterRow);
 
   // Playlist
@@ -717,7 +714,7 @@ function _updatePlayBtn() {
   if (!_panelEl) return;
   const btn = _panelEl.querySelector("#mw-play");
   if (!btn) return;
-  btn.textContent = _isPlaying ? "\u23F8" : "\u25B6";
+  btn.textContent = _isPlaying ? "||" : "\u25B6";
 }
 
 function _updateToggleBtn() {

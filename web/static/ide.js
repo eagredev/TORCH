@@ -139,7 +139,7 @@ export function render(container) {
     <span class="ide-status-item" id="ide-status-build">
       <span class="dot" style="background: var(--status-ok)"></span> Ready
     </span>
-    <span class="ide-status-item" id="ide-status-version" style="margin-left: auto"></span>
+    <span class="ide-status-item" id="ide-status-version"></span>
   `;
   root.appendChild(status);
 
