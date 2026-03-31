@@ -14,6 +14,7 @@ import { initToolbar, cleanupToolbar } from "./toolbar.js";
 import { initScriptDrawer, cleanupScriptDrawer } from "./scriptDrawer.js";
 import { initScriptsMode, cleanupScriptsMode } from "./scriptsMode.js";
 import { initDexWidget, cleanupDexWidget } from "./dexStatusWidget.js";
+import { initMusicWidget, cleanupMusicWidget } from "./musicStatusWidget.js";
 import { initCollisionOverlay, cleanupCollisionOverlay } from "./collisionOverlay.js";
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,7 @@ export function render(container) {
   initContextPanel(document.getElementById("ide-right"));
   initScriptDrawer(document.getElementById("ide-drawer"));
   initScriptsMode();
+  initMusicWidget(container);
   initDexWidget(container);
 
   // Wire resize handles
@@ -284,6 +286,7 @@ export function cleanup() {
   cleanupContextPanel();
   cleanupScriptDrawer();
   cleanupScriptsMode();
+  cleanupMusicWidget();
   cleanupDexWidget();
 
   if (_styleEl) {

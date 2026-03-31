@@ -102,7 +102,10 @@ export function initDexWidget(containerEl) {
   _toggleBtn.textContent = "Dex";
   _toggleBtn.title = "Toggle Dex reference";
   _toggleBtn.addEventListener("click", _toggle);
-  statusBar.appendChild(_toggleBtn);
+  // Insert before version element so widget buttons sit left of version
+  const versionEl = document.getElementById("ide-status-version");
+  if (versionEl) statusBar.insertBefore(_toggleBtn, versionEl);
+  else statusBar.appendChild(_toggleBtn);
 
   // 2. Create the floating panel
   _panelEl = document.createElement("div");
