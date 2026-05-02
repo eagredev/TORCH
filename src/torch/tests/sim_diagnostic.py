@@ -17,10 +17,12 @@ _pkg_dir = os.path.dirname(_this)
 _parent = os.path.dirname(_pkg_dir)
 if _parent not in sys.path:
     sys.path.insert(0, _parent)
-import importlib
-_pkg = importlib.import_module("torch_dev")
-if "torch" not in sys.modules:
-    sys.modules["torch"] = _pkg
+_pkg_name = os.path.basename(_pkg_dir)
+if _pkg_name != "torch":
+    import importlib
+    _pkg = importlib.import_module(_pkg_name)
+    if "torch" not in sys.modules:
+        sys.modules["torch"] = _pkg
 
 from torch.scene_sim import parse_and_simulate, make_actor, simulate_scene
 from torch.script_model import parse_script_text

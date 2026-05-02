@@ -571,7 +571,7 @@ def test_get_stamps_dir_creates():
 
 def test_list_maps_basic():
     """_custom_stamp_list_maps returns sorted map folder names."""
-    from torch_dev.__main__ import _custom_stamp_list_maps
+    from torch.__main__ import _custom_stamp_list_maps
     game, cleanup = _make_game()
     try:
         maps = _custom_stamp_list_maps(game)
@@ -586,7 +586,7 @@ def test_list_maps_basic():
 
 def test_list_maps_empty():
     """_custom_stamp_list_maps returns empty list for missing dir."""
-    from torch_dev.__main__ import _custom_stamp_list_maps
+    from torch.__main__ import _custom_stamp_list_maps
     tmp = tempfile.mkdtemp(prefix="torch_stamps_test_")
     try:
         maps = _custom_stamp_list_maps(tmp)
@@ -597,7 +597,7 @@ def test_list_maps_empty():
 
 def test_list_maps_no_mapjson():
     """_custom_stamp_list_maps skips folders without map.json."""
-    from torch_dev.__main__ import _custom_stamp_list_maps
+    from torch.__main__ import _custom_stamp_list_maps
     tmp = tempfile.mkdtemp(prefix="torch_stamps_test_")
     try:
         maps_dir = os.path.join(tmp, "data", "maps")
@@ -621,7 +621,7 @@ def test_stamp_info_output():
     """_custom_stamp_info runs without error on a valid stamp."""
     import io
     import sys
-    from torch_dev.__main__ import _custom_stamp_info
+    from torch.__main__ import _custom_stamp_info
     game, cleanup = _make_game()
     try:
         create_stamp(game, "LittlerootTown_BrendansHouse_1F",
@@ -647,7 +647,7 @@ def test_stamp_info_missing():
     """_custom_stamp_info handles missing stamp gracefully."""
     import io
     import sys
-    from torch_dev.__main__ import _custom_stamp_info
+    from torch.__main__ import _custom_stamp_info
     tmp = tempfile.mkdtemp(prefix="torch_stamps_test_")
     try:
         old = sys.stdout
@@ -666,7 +666,7 @@ def test_stamp_list_output():
     """_custom_stamp_list formats table output."""
     import io
     import sys
-    from torch_dev.__main__ import _custom_stamp_list
+    from torch.__main__ import _custom_stamp_list
     game, cleanup = _make_game()
     try:
         create_stamp(game, "LittlerootTown_BrendansHouse_1F",
@@ -689,7 +689,7 @@ def test_stamp_list_empty_output():
     """_custom_stamp_list shows helpful message when empty."""
     import io
     import sys
-    from torch_dev.__main__ import _custom_stamp_list
+    from torch.__main__ import _custom_stamp_list
     tmp = tempfile.mkdtemp(prefix="torch_stamps_test_")
     try:
         old = sys.stdout
