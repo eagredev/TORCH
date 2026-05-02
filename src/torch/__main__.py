@@ -92,12 +92,20 @@ from torch.sync import sync_map, sync_all, restore_map
 _PACKAGE_DIR = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
 
 def _module_available(name):
-    """Return True if the module's .py file exists in this package's directory.
+    """Return True if the module's .py file exists in this package.
 
-    name must be a dotted torch.xxx name; only the leaf filename is checked.
+    name must be a dotted torch.xxx name; checks both the package root
+    and subpackage directories.
     """
     leaf = name.split(".")[-1] + ".py"
-    return os.path.isfile(os.path.join(_PACKAGE_DIR, leaf))
+    # Check flat (legacy) or subpackage layout
+    if os.path.isfile(os.path.join(_PACKAGE_DIR, leaf)):
+        return True
+    for entry in os.listdir(_PACKAGE_DIR):
+        subdir = os.path.join(_PACKAGE_DIR, entry)
+        if os.path.isdir(subdir) and os.path.isfile(os.path.join(subdir, leaf)):
+            return True
+    return False
 
 _HAS_STUDIO   = _module_available("torch.studio")
 _HAS_SCRIPT   = _module_available("torch.script_hub")

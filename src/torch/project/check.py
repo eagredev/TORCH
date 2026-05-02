@@ -104,24 +104,30 @@ def run_check():
         print(f"  {RED}Error: lizard not found at {_LIZARD_PATH}{RST}")
         return False
 
-    pkg_dir = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
+    # Navigate up from project/ to the torch package root
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.realpath(os.path.abspath(__file__))))
     web_dir = os.path.join(pkg_dir, "web")
-    modules = sorted(
-        f for f in os.listdir(pkg_dir)
-        if f.endswith(".py") and not f.startswith("__")
-    )
+    # Collect all .py files in the package (including subdirectories)
+    _skip_dirs = {"tests", "data_files", "__pycache__"}
+    module_paths = []
+    for root, dirs, files in os.walk(pkg_dir):
+        dirs[:] = [d for d in dirs if d not in _skip_dirs]
+        for f in sorted(files):
+            if f.endswith(".py") and not f.startswith("__"):
+                module_paths.append(os.path.join(root, f))
+    module_paths.sort()
 
     print(BAR)
     print(f"  {WHITE}TORCH Code Quality Check{RST}")
     print(BAR)
-    print(f"\n  Scanning {len(modules)} modules...\n")
+    print(f"\n  Scanning {len(module_paths)} modules...\n")
 
     errors = []
     warnings = []
     total_functions = 0
 
-    for mod_file in modules:
-        filepath = os.path.join(pkg_dir, mod_file)
+    for filepath in module_paths:
+        mod_file = os.path.relpath(filepath, pkg_dir)
         funcs = _scan_file(lizard, filepath)
         total_functions += len(funcs)
 
@@ -164,7 +170,7 @@ def run_check():
     e_str = f"{RED}{len(errors)} errors{RST}" if errors else f"{DIM}0 errors{RST}"
     w_str = f"{GOLD}{len(warnings)} warnings{RST}" if warnings else f"{DIM}0 warnings{RST}"
     g_str = f"{RED}{len(guardrail_issues)} guardrail violations{RST}" if guardrail_issues else f"{DIM}0 guardrail violations{RST}"
-    print(f"  {DIM}{len(modules)} modules{RST} | {DIM}{total_functions} functions{RST} | {e_str} | {w_str} | {g_str}")
+    print(f"  {DIM}{len(module_paths)} modules{RST} | {DIM}{total_functions} functions{RST} | {e_str} | {w_str} | {g_str}")
     print(BAR)
 
     return len(errors) == 0 and guardrail_ok

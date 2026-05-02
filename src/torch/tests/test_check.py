@@ -28,7 +28,7 @@ def run_suite():
 
     # 4. Scanning a single file works (use check.py itself)
     check_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "check.py"
+        os.path.dirname(os.path.dirname(__file__)), "project", "check.py"
     )
     funcs = _scan_file(lizard, check_path)
     func_names = [f[0] for f in funcs]
