@@ -2,6 +2,14 @@
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Environment
+.env
 
 # IDE / Editor
 .vscode/
@@ -13,3 +21,35 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+.coverage
+htmlcov/
+coverage.xml
+playwright-report/
+test-results/
+
+# Local data
+*.db
+*.sqlite
+
+# ROM / game files — never commit these
+*.gba
+*.gb
+*.gbc
+*.rom
+*.sav
+*.sa1
+*.sa2
+
+# Build artifacts
+*.o
+*.elf
+*.map
+
+# Backups
+*.zip

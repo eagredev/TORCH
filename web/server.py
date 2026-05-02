@@ -253,13 +253,25 @@ def _watch_browser_process(proc, server):
 
     When the browser window closes (process exits), the server shutdown
     event is set so the main thread can clean up.
+
+    If the browser exits within 2 seconds of launch, it likely handed off
+    to an existing instance (common with Firefox/Flatpak) — in that case,
+    don't trigger shutdown.  The SSE auto-shutdown will handle it instead.
     """
+    import time as _time
+
+    launch_time = _time.monotonic()
+
     def _watcher():
         try:
             proc.wait()
         except (OSError, KeyboardInterrupt):
             pass
-        # Browser exited — signal shutdown
+        elapsed = _time.monotonic() - launch_time
+        if elapsed < 2.0:
+            # Exited too fast — probably handed off to existing browser
+            return
+        # Browser exited normally — signal shutdown
         server.shutdown_event.set()
 
     t = threading.Thread(target=_watcher, daemon=True)

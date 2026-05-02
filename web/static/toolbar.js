@@ -165,6 +165,8 @@ const MENUS = [
       { label: "Toggle Border Tiles", shortcut: "B", action: () => toggleBorders() },
       { sep: true },
       { label: "Toggle Collision", shortcut: "Shift+C", action: () => setCollisionVisible(!isCollisionVisible()) },
+      { sep: true },
+      { label: "Worldstate Simulator", shortcut: "W", action: () => import("./worldstatePanel.js").then(m => m.toggleWorldstate()) },
     ],
   },
   {
@@ -454,6 +456,12 @@ function _onKeyDown(e) {
     // G — Toggle grid
     if (e.key === "g" && !e.ctrlKey && !e.altKey && !e.shiftKey) {
       toggleGrid();
+      return;
+    }
+
+    // W — Worldstate Simulator
+    if (e.key === "w" && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      import("./worldstatePanel.js").then(m => m.toggleWorldstate());
       return;
     }
 

@@ -417,11 +417,15 @@ def _get_auto_build_setting():
 def _sync_stale_before_build(project_dir, game_path, emotes_conf, source_display, max_snapshots):
     """Check enrolled maps for staleness and auto-sync before build.
 
+    Only syncs claimed maps. Re-decompiles pristine_stale maps.
     Returns the number of maps synced, or 0 if none needed.
     Silently returns 0 if registry module is unavailable.
     """
     try:
-        from torch.registry import get_enrolled_maps, get_map_health
+        from torch.registry import (
+            get_enrolled_maps, get_map_health,
+            get_map_state, STATE_PRISTINE, STATE_LOCKED,
+        )
         from torch.sync import sync_map
     except ImportError:
         return 0
@@ -431,13 +435,35 @@ def _sync_stale_before_build(project_dir, game_path, emotes_conf, source_display
         return 0
 
     stale = []
+    pristine_stale = []
     for name in enrolled:
         try:
+            state = get_map_state(project_dir, name)
+            if state in (STATE_PRISTINE, STATE_LOCKED):
+                # Check pristine maps for staleness
+                if state == STATE_PRISTINE:
+                    health = get_map_health(project_dir, name, game_path)
+                    if health == "pristine_stale":
+                        pristine_stale.append(name)
+                continue
             health = get_map_health(project_dir, name, game_path)
             if health in ("stale", "never_written"):
                 stale.append(name)
         except Exception:
             pass
+
+    # Re-decompile pristine_stale maps
+    if pristine_stale:
+        try:
+            from torch.bulk_decompile import re_decompile_pristine
+            for name in pristine_stale:
+                try:
+                    re_decompile_pristine(game_path, name, project_dir)
+                except Exception:
+                    pass
+        except ImportError:
+            pass
+
     if not stale:
         return 0
     print(f"  {DIM}Syncing {len(stale)} stale map(s) before build...{RST}")
@@ -479,6 +505,36 @@ def _build_command(expansion_version):
     if expansion_version is not None and expansion_version >= MAKE_RELEASE:
         return ["make", "release", f"-j{nproc}"]
     return ["make", f"-j{nproc}"]
+
+
+_SNAPSHOT_STALE_DAYS = 3
+
+
+def _warn_stale_snapshot(game_path):
+    """Warn if the most recent verified snapshot is older than N days."""
+    try:
+        from torch.verified_snapshots import list_verified_snapshots
+        from datetime import datetime, timezone
+        snapshots = list_verified_snapshots(game_path)
+        if not snapshots:
+            print(f"  {GOLD}Warning:{RST} No verified build snapshots exist.")
+            print(f"  {DIM}This build will create one. Use 'torch restore' to roll back.{RST}")
+            return
+        latest = snapshots[0]  # newest first
+        ts_str = latest.get("timestamp", "")
+        if not ts_str:
+            return
+        ts = datetime.fromisoformat(ts_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        age_days = (now - ts).days
+        if age_days >= _SNAPSHOT_STALE_DAYS:
+            print(f"  {GOLD}Warning:{RST} Last verified snapshot is {age_days} day(s) old.")
+            print(f"  {DIM}If you've been using 'bb' to build, snapshots aren't created.{RST}")
+            print(f"  {DIM}Use 'torch build' regularly to maintain safety snapshots.{RST}")
+    except Exception:
+        pass  # Never block a build for snapshot warnings
 
 
 def _sanitize_map_scripts(game_path):
@@ -598,6 +654,9 @@ def _execute_build(game_path, expansion_version, trigger, diagnose):
     # Auto-detect expansion version if not provided
     if expansion_version is None:
         expansion_version = detect_expansion_version(game_path)
+
+    # Warn if last verified snapshot is stale
+    _warn_stale_snapshot(game_path)
 
     # Run Map Guard to fix any Porymap save bugs before building
     try:

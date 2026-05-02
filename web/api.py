@@ -897,6 +897,7 @@ def handle_maps(handler, match, query_params):
         enrolled.append({
             "name": map_name,
             "health": health,
+            "state": entry.get("state", "claimed"),
             "is_custom": map_name in custom_set,
             "enrolled_at": entry.get("enrolled_at", ""),
             "last_written": entry.get("last_written", ""),
@@ -1478,9 +1479,14 @@ def handle_maps_attention(handler, match, query_params):
 
     needs_sync = []
     try:
-        from torch.registry import load_registry, get_map_health
+        from torch.registry import load_registry, get_map_health, STATE_PRISTINE, STATE_LOCKED
         registry = load_registry(project_dir)
         for map_name in sorted(registry.get("maps", {})):
+            entry = registry["maps"][map_name]
+            state = entry.get("state", "claimed")
+            # Skip pristine and locked maps — they don't need user action
+            if state in (STATE_PRISTINE, STATE_LOCKED):
+                continue
             health = get_map_health(project_dir, map_name, game_path)
             if health not in ("ok",):
                 needs_sync.append({"name": map_name, "health": health})
@@ -3447,6 +3453,56 @@ def handle_studio_map_detail(handler, match, query_params):
     })
 
 
+@api_route("POST", r"/api/maps/enroll-all")
+def handle_enroll_all(handler, match, query_params):
+    """Bulk-enroll and decompile all game maps into the workspace."""
+    project_dir = getattr(handler.server, "project_dir", "")
+    game_path = getattr(handler.server, "game_path", "")
+    if not project_dir or not game_path:
+        return error_response("No project directory configured", 500)
+
+    from torch.bulk_decompile import bulk_decompile_all_maps
+    emotes_conf, _ = _derive_sync_params(project_dir)
+    counts = bulk_decompile_all_maps(game_path, project_dir, emotes_conf)
+
+    _studio_maps_cache.clear()
+
+    return ok_response(counts)
+
+
+@api_route("POST", r"/api/maps/(?P<map_name>[A-Za-z0-9_]+)/lock")
+def handle_map_lock(handler, match, query_params):
+    """Lock a map (prevent sync)."""
+    map_name = match.group("map_name")
+    project_dir = getattr(handler.server, "project_dir", "")
+    if not project_dir:
+        return error_response("No project directory configured", 500)
+
+    body = _read_json_body(handler) or {}
+    reason = body.get("reason")
+
+    from torch.registry import set_map_state, STATE_LOCKED
+    if set_map_state(project_dir, map_name, STATE_LOCKED, lock_reason=reason):
+        _studio_maps_cache.clear()
+        return ok_response({"map_name": map_name, "state": "locked"})
+    return error_response(f"{map_name} is not enrolled", 404)
+
+
+@api_route("POST", r"/api/maps/(?P<map_name>[A-Za-z0-9_]+)/unlock")
+def handle_map_unlock(handler, match, query_params):
+    """Unlock a map (transition to claimed)."""
+    map_name = match.group("map_name")
+    project_dir = getattr(handler.server, "project_dir", "")
+    if not project_dir:
+        return error_response("No project directory configured", 500)
+
+    from torch.registry import set_map_state, STATE_CLAIMED
+    if set_map_state(project_dir, map_name, STATE_CLAIMED):
+        _studio_maps_cache.clear()
+        return ok_response({"map_name": map_name, "state": "claimed"})
+    return error_response(f"{map_name} is not enrolled", 404)
+
+
 @api_route("POST", r"/api/studio/maps/(?P<map_name>[A-Za-z0-9_]+)/enroll")
 def handle_map_enroll(handler, match, query_params):
     """Enroll a map in the TORCH registry."""
@@ -4136,10 +4192,23 @@ def load_scene_initial_state(game_path, map_name, parsed_script,
     """
     from torch.project_files import load_map_json
 
+    # Determine player sprite from global worldstate gender setting
+    player_gfx = "OBJ_EVENT_GFX_BRENDAN_NORMAL"
+    if game_path:
+        try:
+            from torch.web.api_worldstate import _load_global_conditions
+            for cond in _load_global_conditions(game_path):
+                if cond.get("variable") == "PLAYER_GENDER":
+                    if (cond.get("current") or cond.get("default")) == "FEMALE":
+                        player_gfx = "OBJ_EVENT_GFX_MAY_NORMAL"
+                    break
+        except Exception:
+            pass
+
     data = load_map_json(game_path, map_name)
     if not data:
         return {"player": {"x": 0, "y": 0, "facing": "down",
-                           "visible": True, "graphics_id": "OBJ_EVENT_GFX_BRENDAN_NORMAL"}}
+                           "visible": True, "graphics_id": player_gfx}}
 
     object_events = data.get("object_events", [])
     cast = parsed_script.get("cast", {})
@@ -4276,7 +4345,7 @@ def load_scene_initial_state(game_path, map_name, parsed_script,
         positions["player"] = {
             "x": px, "y": py, "facing": pf,
             "visible": True,
-            "graphics_id": "OBJ_EVENT_GFX_BRENDAN_NORMAL",
+            "graphics_id": player_gfx,
         }
 
     return positions
@@ -5264,12 +5333,14 @@ def handle_scene_detail(handler, match, query_params):
     setup_moves = _load_setup_movements(project_dir, map_name)
     frames = simulate_scene(parsed, initial, setup_moves)
 
-    # Read source text
+    # Read source text and record mtime for stale-save detection
     try:
+        file_mtime = os.path.getmtime(filepath)
         with open(filepath, "r", encoding="utf-8") as f:
             source = f.read()
     except OSError:
         source = ""
+        file_mtime = 0
 
     scene_sprites = _build_scene_sprites(game_path, initial, frames)
 
@@ -5277,6 +5348,7 @@ def handle_scene_detail(handler, match, query_params):
         "map": map_name,
         "script": script_name,
         "source": source,
+        "file_mtime": file_mtime,
         "cast": effective_cast,
         "frames": frames,
         "sprite_index": scene_sprites,
@@ -5405,12 +5477,28 @@ def handle_scene_save(handler, match, query_params):
             return error_response(f"Map directory '{map_name}' not found", 404)
 
         filepath = _get_script_path(project_dir, map_name, script_name)
+
+        # Stale-save guard: reject if the file changed on disk since it was loaded.
+        # This prevents browser-cached old content from overwriting external edits.
+        if "file_mtime" in body and os.path.isfile(filepath):
+            try:
+                current_mtime = os.path.getmtime(filepath)
+                if current_mtime > body["file_mtime"] + 0.001:
+                    return error_response(
+                        "File was modified externally since you loaded it. "
+                        "Reload the script to get the latest version before saving.",
+                        409
+                    )
+            except OSError:
+                pass
+
         try:
             _atomic_write(filepath, body["source"])
+            new_mtime = os.path.getmtime(filepath)
         except OSError as exc:
             return error_response(f"Failed to save: {exc}", 500)
 
-        return ok_response({"saved": True, "path": filepath})
+        return ok_response({"saved": True, "path": filepath, "file_mtime": new_mtime})
 
 
 @api_route("POST", r"/api/scenes/(?P<map_name>[A-Za-z0-9_]+)/(?P<script_name>[A-Za-z0-9_]+)/analyze-delete")
@@ -6411,6 +6499,7 @@ def handle_shutdown(handler, match, query_params):
 # ---------------------------------------------------------------------------
 
 import torch.web.api_flags      # noqa: E402,F401
+import torch.web.api_vars       # noqa: E402,F401
 import torch.web.api_items      # noqa: E402,F401
 import torch.web.api_moves      # noqa: E402,F401
 import torch.web.api_shops      # noqa: E402,F401
@@ -6431,4 +6520,5 @@ import torch.web.api_events  # noqa: E402,F401
 import torch.web.api_triggers  # noqa: E402,F401
 import torch.web.api_music  # noqa: E402,F401
 import torch.web.api_stamps  # noqa: E402,F401
+import torch.web.api_worldstate  # noqa: E402,F401
 import torch.web.collision  # noqa: E402,F401

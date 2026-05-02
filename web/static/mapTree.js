@@ -13,6 +13,7 @@ import {
   IDE_SCRIPT_LOADED, IDE_SCRIPT_UNLOADED,
 } from "./ide.js";
 import { initBeatPanel, cleanupBeatPanel } from "./scriptBeatPanel.js";
+import { renderDataBeats } from "./views/viz/beatList.js";
 import { openToolModal } from "./toolbar.js";
 
 // ---------------------------------------------------------------------------
@@ -30,12 +31,14 @@ let _mapUnsub = null;
 let _modeUnsub = null;
 let _scriptLoadUnsub = null;
 let _scriptUnloadUnsub = null;
-let _activeTab = "maps";    // "maps", "beats", or "project"
+let _activeTab = "maps";    // "maps", "beats", "data", or "project"
 let _scriptsMode = false;
 let _beatTabEl = null;
+let _dataTabEl = null;
 let _mapsTabEl = null;
 let _projectTabEl = null;
 let _beatPanelHost = null;  // container for beat panel (sibling of _treeEl)
+let _dataHost = null;       // container for data tab content
 let _projectHost = null;    // container for project tab content
 
 // ---------------------------------------------------------------------------
@@ -53,9 +56,10 @@ export function initMapTree(container) {
       <div class="ide-left-tabs">
         <button class="ide-left-tab active" data-tab="maps">Maps</button>
         <button class="ide-left-tab" data-tab="beats" style="display:none">Beats</button>
+        <button class="ide-left-tab" data-tab="data" style="display:none">Data</button>
         <button class="ide-left-tab" data-tab="project">Project</button>
       </div>
-      <button class="ide-left-collapse" title="Collapse panel">\u25C0</button>
+      <button class="ide-left-collapse" title="Collapse panel">\u203A</button>
     </div>
     <input type="text" class="ide-map-search" placeholder="Search maps..."
            id="ide-tree-search" autocomplete="off" spellcheck="false" />
@@ -66,9 +70,11 @@ export function initMapTree(container) {
 
   _mapsTabEl = header.querySelector('[data-tab="maps"]');
   _beatTabEl = header.querySelector('[data-tab="beats"]');
+  _dataTabEl = header.querySelector('[data-tab="data"]');
   _projectTabEl = header.querySelector('[data-tab="project"]');
   _mapsTabEl.addEventListener("click", () => _switchTab("maps"));
   _beatTabEl.addEventListener("click", () => _switchTab("beats"));
+  _dataTabEl.addEventListener("click", () => _switchTab("data"));
   _projectTabEl.addEventListener("click", () => _switchTab("project"));
 
   _searchEl = document.getElementById("ide-tree-search");
@@ -84,6 +90,12 @@ export function initMapTree(container) {
   _beatPanelHost.className = "ide-beat-panel-host";
   _beatPanelHost.style.cssText = "display:none;flex:1;overflow:hidden;";
   container.appendChild(_beatPanelHost);
+
+  // Data panel host (hidden by default, shown in scripts mode)
+  _dataHost = document.createElement("div");
+  _dataHost.className = "ide-data-host";
+  _dataHost.style.cssText = "display:none;flex:1;overflow-y:auto;padding:0.3rem;min-height:0;";
+  container.appendChild(_dataHost);
 
   // Project panel host (hidden by default)
   _projectHost = document.createElement("div");
@@ -130,9 +142,11 @@ export function cleanupMapTree() {
   _activeTab = "maps";
   _scriptsMode = false;
   _beatTabEl = null;
+  _dataTabEl = null;
   _mapsTabEl = null;
   _projectTabEl = null;
   _beatPanelHost = null;
+  _dataHost = null;
   _projectHost = null;
 }
 
@@ -245,12 +259,14 @@ function _switchTab(tab) {
 
   if (_mapsTabEl) _mapsTabEl.classList.toggle("active", tab === "maps");
   if (_beatTabEl) _beatTabEl.classList.toggle("active", tab === "beats");
+  if (_dataTabEl) _dataTabEl.classList.toggle("active", tab === "data");
   if (_projectTabEl) _projectTabEl.classList.toggle("active", tab === "project");
 
   // Hide all tab content
   if (_treeEl) _treeEl.style.display = "none";
   if (_searchEl) _searchEl.style.display = "none";
   if (_beatPanelHost) _beatPanelHost.style.display = "none";
+  if (_dataHost) _dataHost.style.display = "none";
   if (_projectHost) _projectHost.style.display = "none";
   cleanupBeatPanel();
 
@@ -261,6 +277,11 @@ function _switchTab(tab) {
     if (_beatPanelHost) {
       _beatPanelHost.style.display = "flex";
       initBeatPanel(_beatPanelHost);
+    }
+  } else if (tab === "data") {
+    if (_dataHost) {
+      _dataHost.style.display = "";
+      _renderDataTab();
     }
   } else if (tab === "project") {
     if (_projectHost) {
@@ -273,7 +294,8 @@ function _switchTab(tab) {
 function _onModeChanged(detail) {
   _scriptsMode = detail.mode === "scripts";
   if (_beatTabEl) _beatTabEl.style.display = _scriptsMode ? "" : "none";
-  if (!_scriptsMode && _activeTab === "beats") {
+  if (_dataTabEl) _dataTabEl.style.display = _scriptsMode ? "" : "none";
+  if (!_scriptsMode && (_activeTab === "beats" || _activeTab === "data")) {
     _switchTab("maps");
   }
 }
@@ -301,7 +323,7 @@ function _toggleLeftCollapse() {
   if (handle) handle.style.display = collapsed ? "none" : "";
 
   const btn = left.querySelector(".ide-left-collapse");
-  if (btn) btn.textContent = collapsed ? "\u25B6" : "\u25C0";
+  if (btn) btn.textContent = collapsed ? "\u2039" : "\u203A";
 }
 
 function _onSearch() {
@@ -364,6 +386,14 @@ function _autoRestoreLastMap() {
 }
 
 // ---------------------------------------------------------------------------
+// Data tab rendering
+// ---------------------------------------------------------------------------
+
+function _renderDataTab() {
+  if (!_dataHost) return;
+  renderDataBeats(_dataHost);
+}
+
 // Project tab rendering
 // ---------------------------------------------------------------------------
 

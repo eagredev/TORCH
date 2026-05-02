@@ -391,7 +391,7 @@ def test_bulk_decompile_all_vanilla():
     import os, glob
     from torch.inc_decompiler import decompile_inc_file
 
-    corpus = '/home/deck/Documents/torch-dev/data/maps'
+    corpus = os.path.expanduser('~/Documents/torch-dev/data/maps')
     if not os.path.isdir(corpus):
         _skip("bulk vanilla", "torch-dev corpus not found")
         return
@@ -420,7 +420,7 @@ def test_route101_structure():
     import os
     from torch.inc_decompiler import decompile_inc_file
 
-    f = '/home/deck/Documents/torch-dev/data/maps/Route101/scripts.inc'
+    f = os.path.expanduser('~/Documents/torch-dev/data/maps/Route101/scripts.inc')
     if not os.path.isfile(f):
         _skip("route101 structure", "file not found")
         return
@@ -438,7 +438,7 @@ def test_sootopolis_control_flow():
     import os
     from torch.inc_decompiler import decompile_inc_file
 
-    f = '/home/deck/Documents/torch-dev/data/maps/SootopolisCity/scripts.inc'
+    f = os.path.expanduser('~/Documents/torch-dev/data/maps/SootopolisCity/scripts.inc')
     if not os.path.isfile(f):
         _skip("sootopolis control flow", "file not found")
         return

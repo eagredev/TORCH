@@ -54,6 +54,7 @@ from torch.tests import (
     test_map_explorer,
     test_battle_partners,
     test_flag_scanner,
+    test_var_scanner,
     test_give_and_coord,
     test_main_menu,
     test_cleanup_scanner,
@@ -84,6 +85,8 @@ from torch.tests import (
     test_collision,
     test_browser_launch,
     test_api_triggers,
+    test_bulk_decompile,
+    test_self_flags,
 )
 
 _SUITES = [
@@ -146,6 +149,7 @@ _SUITES = [
     ("map_explorer",       test_map_explorer),
     ("battle_partners",    test_battle_partners),
     ("flag_scanner",       test_flag_scanner),
+    ("var_scanner",        test_var_scanner),
     ("give_and_coord",     test_give_and_coord),
     ("main_menu",          test_main_menu),
     ("cleanup_scanner",    test_cleanup_scanner),
@@ -176,6 +180,8 @@ _SUITES = [
     ("collision",          test_collision),
     ("browser_launch",     test_browser_launch),
     ("api_triggers",       test_api_triggers),
+    ("bulk_decompile",     test_bulk_decompile),
+    ("self_flags",         test_self_flags),
 ]
 
 

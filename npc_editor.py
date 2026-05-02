@@ -1633,6 +1633,34 @@ def _generate_multi_state(map_name, label, states):
     return "\n".join(lines) + "\n"
 
 
+def _generate_multi_state_pages(map_name, label, npc_id, states):
+    """Generate TorScript with NPC pages for multi-state NPC.
+
+    states: list of {"flag": str|None, "text": str}
+    First state has flag=None (default page).
+    Returns TorScript content for a .txt file.
+    """
+    lines = [f"alias {label.split('_')[-1].lower()} npc{npc_id}", ""]
+
+    for i, state in enumerate(states):
+        page_num = i + 1
+        if page_num == 1:
+            lines.append("page 1")
+        else:
+            flag = state.get("flag", "FLAG_TEMP_1")
+            lines.append(f"page {page_num} if {flag}")
+
+        lines.append(f"label {label}")
+        lines.append("lock")
+        lines.append("faceplayer")
+        text = state.get("text", "$")
+        lines.append(f'msg "{text}"')
+        lines.append("end")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Infrastructure templates — registry
 # ---------------------------------------------------------------------------

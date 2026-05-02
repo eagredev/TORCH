@@ -17,6 +17,7 @@ const HEALTH_LABELS = {
   orphan: "Orphan",
   never_written: "New",
   missing_workspace: "Missing",
+  pristine_stale: "Outdated",
 };
 
 const HEALTH_CLASSES = {
@@ -26,6 +27,13 @@ const HEALTH_CLASSES = {
   orphan: "orphan",
   never_written: "never",
   missing_workspace: "never",
+  pristine_stale: "stale",
+};
+
+const STATE_CLASSES = {
+  pristine: "pristine",
+  claimed: "",
+  locked: "locked",
 };
 
 function timeAgo(dateStr) {
@@ -253,6 +261,32 @@ export async function render(container) {
         e.target.textContent = "Sync error";
       }
     }
+    // Enroll All button
+    if (e.target.classList.contains("enroll-all-btn")) {
+      e.target.disabled = true;
+      e.target.textContent = "Enrolling...";
+      try {
+        const res = await fetch("/api/maps/enroll-all", { method: "POST" });
+        const body = await res.json();
+        if (body.ok) {
+          const d = body.data;
+          const n = (d.pristine || 0) + (d.locked || 0) + (d.claimed || 0);
+          e.target.textContent = n > 0 ? `Imported ${n} map${n !== 1 ? "s" : ""}` : "All maps already enrolled";
+          // Refresh attention + health sections
+          api("/maps/attention").then(r => { if (r.ok) renderAttention(attentionContent, r.data); });
+          api("/maps").then(r => {
+            if (r.ok) {
+              renderHealthGrid(healthGrid, healthSummary, r.data.enrolled);
+              renderActivity(activityList, r.data.enrolled);
+            }
+          });
+        } else {
+          e.target.textContent = body.error || "Enroll failed";
+        }
+      } catch (err) {
+        e.target.textContent = "Enroll error";
+      }
+    }
     // Backup Now button (delegated — button is re-rendered on refresh)
     if (e.target.classList.contains("dash-backup-btn")) {
       handleBackupClick(e.target, backupSummary);
@@ -319,7 +353,7 @@ function renderAttention(container, data) {
     html += `<div class="unenrolled-section">
       <h3>Unenrolled</h3>
       <p class="unenrolled-list">${esc(unenrolled.join(", "))}</p>
-      <p class="unenrolled-hint">These workspace folders aren't enrolled. Use <code>torch enroll</code> to add them.</p>
+      <button class="enroll-all-btn">Enroll All Maps</button>
     </div>`;
   }
 
@@ -335,22 +369,40 @@ function renderHealthGrid(grid, summary, enrolled) {
   }
 
   grid.innerHTML = enrolled.map(m => {
-    const cls = HEALTH_CLASSES[m.health] || "never";
-    const label = HEALTH_LABELS[m.health] || m.health;
+    const state = m.state || "claimed";
+    let cls;
+    if (state === "pristine") cls = "pristine";
+    else if (state === "locked") cls = "locked";
+    else cls = HEALTH_CLASSES[m.health] || "never";
+    const label = state === "pristine" ? "Pristine" : state === "locked" ? "Locked" : (HEALTH_LABELS[m.health] || m.health);
     return `<div class="health-block ${cls}" title="${esc(m.name)} (${label})"></div>`;
   }).join("");
 
-  // Summary counts
+  // Summary counts by state
+  const stateCounts = { pristine: 0, claimed: 0, locked: 0 };
+  for (const m of enrolled) {
+    const s = m.state || "claimed";
+    stateCounts[s] = (stateCounts[s] || 0) + 1;
+  }
+  // Health counts for claimed maps only
   const counts = {};
   for (const m of enrolled) {
-    const h = m.health;
-    counts[h] = (counts[h] || 0) + 1;
+    if ((m.state || "claimed") === "claimed") {
+      const h = m.health;
+      counts[h] = (counts[h] || 0) + 1;
+    }
   }
   const parts = [];
-  for (const [h, label] of Object.entries(HEALTH_LABELS)) {
-    if (counts[h]) parts.push(`${counts[h]} ${label.toLowerCase()}`);
+  if (stateCounts.claimed) {
+    const healthParts = [];
+    for (const [h, label] of Object.entries(HEALTH_LABELS)) {
+      if (counts[h]) healthParts.push(`${counts[h]} ${label.toLowerCase()}`);
+    }
+    parts.push(`${stateCounts.claimed} claimed (${healthParts.join(", ") || "all ok"})`);
   }
-  summary.textContent = `${parts.join(", ")} (${enrolled.length} total)`;
+  if (stateCounts.pristine) parts.push(`${stateCounts.pristine} pristine`);
+  if (stateCounts.locked) parts.push(`${stateCounts.locked} locked`);
+  summary.textContent = `${parts.join(" | ")} — ${enrolled.length} total`;
 }
 
 function renderActivity(container, enrolled) {

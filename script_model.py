@@ -21,7 +21,20 @@ BEAT_TAGS = {
     "gotoif": "GIF", "var": "VAR", "shake": "SHK", "closemessage": "CLM",
     "music": "MUS", "fanfare": "FAN", "cry": "CRY", "text": "TXT",
     "movement": "BLK", "raw": "RAW", "follower": "FOL", "multi": "MLT",
-    "give": "GIV",
+    "give": "GIV", "page": "PAG", "condition": "CND", "endif": "END",
+    "switch": "SWC", "case": "CAS", "endswitch": "ESW",
+    "choice": "CHC", "option": "OPT", "endchoice": "ECH",
+    "check": "CHK",
+    # Wait/sync commands
+    "waitmessage": "WMS", "waitbutton": "WBT", "waitse": "WSE",
+    "waitmoncry": "WCR", "waitfanfare": "WFN",
+    # Extended commands
+    "message": "MSG", "wildbattle": "WLD", "take": "TAK",
+    "random": "RND", "shop": "SHP", "braille": "BRL",
+    "showmon": "SMN", "hidemon": "HMN",
+    "showmoney": "MON", "showcoins": "COI",
+    "buffer": "BUF", "tile": "TIL", "door": "DOR",
+    "stat": "STA", "slots": "SLT", "getpos": "GPO",
 }
 
 from torch.colours import GOLD, WHITE, CYAN, GREEN, RED, BLUE, DIM, RST, BOLD_RED, DGOLD
@@ -36,13 +49,17 @@ _TAG_COLOURS = {
     "EMO": DGOLD, "SHK": DGOLD, "CRY": DGOLD, "FAN": DGOLD,
     # Flow / logic (magenta)
     "FLW": "\033[35m", "GIF": "\033[35m", "FLG": "\033[35m", "VAR": "\033[35m", "GIV": "\033[35m",
+    "CND": "\033[35m", "END": "\033[35m",
+    "SWC": "\033[35m", "CAS": "\033[35m", "ESW": "\033[35m",
+    "CHC": "\033[35m", "OPT": "\033[35m", "ECH": "\033[35m",
+    "CHK": "\033[35m",
     # Battle (red bold)
     "BTL": BOLD_RED,
     # Scene / atmosphere (blue)
     "FAD": BLUE, "SND": BLUE, "MUS": BLUE, "PAU": BLUE,
     "HID": BLUE, "SHW": BLUE,
     # Structure (bold white)
-    "LBL": WHITE, "LCK": WHITE, "SPC": WHITE, "WAI": WHITE,
+    "LBL": WHITE, "LCK": WHITE, "SPC": WHITE, "WAI": WHITE, "PAG": WHITE,
     # Meta (dim)
     "REM": DIM, "POR": DIM, "RAW": DIM,
     # Follower NPC (cyan — movement-adjacent)
@@ -205,8 +222,10 @@ def _parse_beat_flag(tokens, stripped, lines, i, cast):
 
 def _parse_beat_var(tokens, stripped, lines, i, cast):
     var_name = tokens[1] if len(tokens) >= 2 else ""
-    value = tokens[2] if len(tokens) >= 3 else ""
-    return {"type": "var", "data": {"var_name": var_name, "value": value}}, i + 1
+    op_or_val = tokens[2] if len(tokens) >= 3 else ""
+    if op_or_val in ('=', '+', '-') and len(tokens) >= 4:
+        return {"type": "var", "data": {"var_name": var_name, "op": op_or_val, "value": tokens[3]}}, i + 1
+    return {"type": "var", "data": {"var_name": var_name, "value": op_or_val}}, i + 1
 
 
 def _parse_beat_hide(tokens, stripped, lines, i, cast):
@@ -248,7 +267,8 @@ def _parse_beat_faceplayer(tokens, stripped, lines, i, cast):
 
 def _parse_beat_special(tokens, stripped, lines, i, cast):
     func = tokens[1] if len(tokens) >= 2 else ""
-    return {"type": "special", "data": {"function": func}}, i + 1
+    result_var = tokens[2] if len(tokens) >= 3 else ""
+    return {"type": "special", "data": {"function": func, "result_var": result_var}}, i + 1
 
 
 def _parse_beat_waitstate(tokens, stripped, lines, i, cast):
@@ -259,6 +279,60 @@ def _parse_beat_gotoif(tokens, stripped, lines, i, cast):
     flag = tokens[1] if len(tokens) >= 2 else ""
     target = tokens[2] if len(tokens) >= 3 else ""
     return {"type": "gotoif", "data": {"flag": flag, "target": target}}, i + 1
+
+
+def _parse_beat_page(tokens, stripped, lines, i, cast):
+    """Parse 'page N [if CONDITION]' into a page beat."""
+    page_num = int(tokens[1]) if len(tokens) >= 2 else 1
+    raw_condition = ""
+    if len(tokens) >= 3 and tokens[2] == "if":
+        raw_condition = " ".join(tokens[3:])
+    return {"type": "page", "data": {"page_num": page_num, "condition": raw_condition}}, i + 1
+
+
+def _parse_beat_condition(tokens, stripped, lines, i, cast):
+    """Parse if/elif/else into a condition beat."""
+    branch = tokens[0]  # "if", "elif", or "else"
+    raw_cond = stripped[len(branch):].strip() if branch != "else" else ""
+    return {"type": "condition", "data": {"branch": branch, "raw_condition": raw_cond}}, i + 1
+
+
+def _parse_beat_endif(tokens, stripped, lines, i, cast):
+    return {"type": "endif", "data": {}}, i + 1
+
+
+def _parse_beat_switch(tokens, stripped, lines, i, cast):
+    var_name = tokens[1] if len(tokens) >= 2 else ""
+    return {"type": "switch", "data": {"var": var_name}}, i + 1
+
+
+def _parse_beat_case(tokens, stripped, lines, i, cast):
+    value = tokens[1] if len(tokens) >= 2 else ""
+    return {"type": "case", "data": {"value": value}}, i + 1
+
+
+def _parse_beat_endswitch(tokens, stripped, lines, i, cast):
+    return {"type": "endswitch", "data": {}}, i + 1
+
+
+def _parse_beat_choice(tokens, stripped, lines, i, cast):
+    prompt = stripped[7:].strip().strip('"').rstrip('"') if len(stripped) > 7 else ""
+    return {"type": "choice", "data": {"prompt": prompt}}, i + 1
+
+
+def _parse_beat_option(tokens, stripped, lines, i, cast):
+    text = stripped[7:].strip().strip('"').rstrip('"') if len(stripped) > 7 else ""
+    return {"type": "option", "data": {"text": text}}, i + 1
+
+
+def _parse_beat_endchoice(tokens, stripped, lines, i, cast):
+    return {"type": "endchoice", "data": {}}, i + 1
+
+
+def _parse_beat_check(tokens, stripped, lines, i, cast):
+    check_type = tokens[1] if len(tokens) >= 2 else ""
+    argument = tokens[2] if len(tokens) >= 3 else ""
+    return {"type": "check", "data": {"check_type": check_type, "argument": argument}}, i + 1
 
 
 def _parse_beat_battle(tokens, stripped, lines, i, cast):
@@ -321,6 +395,86 @@ def _parse_beat_pory(tokens, stripped, lines, i, cast):
     return {"type": "pory", "data": {"raw_line": pory_content}}, i + 1
 
 
+# Simple keyword beat parsers (no args)
+def _parse_beat_keyword(beat_type):
+    def parser(tokens, stripped, lines, i, cast):
+        return {"type": beat_type, "data": {}}, i + 1
+    return parser
+
+_parse_beat_waitmessage = _parse_beat_keyword("waitmessage")
+_parse_beat_waitbutton = _parse_beat_keyword("waitbutton")
+_parse_beat_waitse = _parse_beat_keyword("waitse")
+_parse_beat_waitmoncry = _parse_beat_keyword("waitmoncry")
+_parse_beat_waitfanfare = _parse_beat_keyword("waitfanfare")
+_parse_beat_hidemon = _parse_beat_keyword("hidemon")
+
+# Single-arg beat parsers
+def _parse_beat_single_arg(beat_type, field):
+    def parser(tokens, stripped, lines, i, cast):
+        val = tokens[1] if len(tokens) >= 2 else ""
+        return {"type": beat_type, "data": {field: val}}, i + 1
+    return parser
+
+_parse_beat_message_cmd = _parse_beat_single_arg("message", "label")
+_parse_beat_random = _parse_beat_single_arg("random", "max")
+_parse_beat_braille = _parse_beat_single_arg("braille", "label")
+_parse_beat_stat = _parse_beat_single_arg("stat", "stat_name")
+_parse_beat_slots = _parse_beat_single_arg("slots", "machine_var")
+
+def _parse_beat_wildbattle(tokens, stripped, lines, i, cast):
+    if len(tokens) >= 2 and tokens[1] == "start":
+        return {"type": "wildbattle", "data": {"action": "start"}}, i + 1
+    species = tokens[1] if len(tokens) >= 2 else ""
+    level = tokens[2] if len(tokens) >= 3 else ""
+    item = tokens[3] if len(tokens) >= 4 else ""
+    return {"type": "wildbattle", "data": {"species": species, "level": level, "item": item}}, i + 1
+
+def _parse_beat_take(tokens, stripped, lines, i, cast):
+    item = tokens[1] if len(tokens) >= 2 else ""
+    qty = tokens[2] if len(tokens) >= 3 else "1"
+    return {"type": "take", "data": {"item": item, "qty": qty}}, i + 1
+
+def _parse_beat_shop(tokens, stripped, lines, i, cast):
+    label = tokens[1] if len(tokens) >= 2 else ""
+    variant = tokens[2] if len(tokens) >= 3 else ""
+    return {"type": "shop", "data": {"label": label, "variant": variant}}, i + 1
+
+def _parse_beat_showmon(tokens, stripped, lines, i, cast):
+    species = tokens[1] if len(tokens) >= 2 else ""
+    return {"type": "showmon", "data": {"species": species}}, i + 1
+
+def _parse_beat_showmoney(tokens, stripped, lines, i, cast):
+    return {"type": "showmoney", "data": {}}, i + 1
+
+def _parse_beat_showcoins(tokens, stripped, lines, i, cast):
+    return {"type": "showcoins", "data": {}}, i + 1
+
+def _parse_beat_buffer(tokens, stripped, lines, i, cast):
+    slot = tokens[1] if len(tokens) >= 2 else ""
+    buf_type = tokens[2] if len(tokens) >= 3 else ""
+    arg = tokens[3] if len(tokens) >= 4 else ""
+    return {"type": "buffer", "data": {"slot": slot, "buf_type": buf_type, "arg": arg}}, i + 1
+
+def _parse_beat_tile(tokens, stripped, lines, i, cast):
+    x = tokens[1] if len(tokens) >= 2 else ""
+    y = tokens[2] if len(tokens) >= 3 else ""
+    metatile = tokens[3] if len(tokens) >= 4 else ""
+    collision = tokens[4] if len(tokens) >= 5 else ""
+    return {"type": "tile", "data": {"x": x, "y": y, "metatile": metatile, "collision": collision}}, i + 1
+
+def _parse_beat_door(tokens, stripped, lines, i, cast):
+    action = tokens[1] if len(tokens) >= 2 else ""
+    x = tokens[2] if len(tokens) >= 3 else ""
+    y = tokens[3] if len(tokens) >= 4 else ""
+    return {"type": "door", "data": {"action": action, "x": x, "y": y}}, i + 1
+
+def _parse_beat_getpos(tokens, stripped, lines, i, cast):
+    target = tokens[1] if len(tokens) >= 2 else ""
+    var_x = tokens[2] if len(tokens) >= 3 else ""
+    var_y = tokens[3] if len(tokens) >= 4 else ""
+    return {"type": "getpos", "data": {"target": target, "var_x": var_x, "var_y": var_y}}, i + 1
+
+
 # Dispatch table: command keyword -> parser function
 # Each parser: (tokens, stripped, lines, i, cast) -> (beat_dict, new_i)
 _PARSE_CMD_DISPATCH = {
@@ -355,6 +509,19 @@ _PARSE_CMD_DISPATCH = {
     "special": _parse_beat_special,
     "waitstate": _parse_beat_waitstate,
     "gotoif": _parse_beat_gotoif,
+    "page": _parse_beat_page,
+    "if": _parse_beat_condition,
+    "elif": _parse_beat_condition,
+    "else": _parse_beat_condition,
+    "endif": _parse_beat_endif,
+    "switch": _parse_beat_switch,
+    "case": _parse_beat_case,
+    "default": _parse_beat_case,
+    "endswitch": _parse_beat_endswitch,
+    "choice": _parse_beat_choice,
+    "option": _parse_beat_option,
+    "endchoice": _parse_beat_endchoice,
+    "check": _parse_beat_check,
     "trainerbattle_double": _parse_beat_battle,
     "trainerbattle_single": _parse_beat_battle,
     "trainerbattle_no_intro": _parse_beat_battle,
@@ -363,6 +530,29 @@ _PARSE_CMD_DISPATCH = {
     "follower": _parse_beat_follower,
     "multi": _parse_beat_multi,
     "give": _parse_beat_give,
+    # Wait/sync
+    "waitmessage": _parse_beat_waitmessage,
+    "waitbutton": _parse_beat_waitbutton,
+    "waitse": _parse_beat_waitse,
+    "waitmoncry": _parse_beat_waitmoncry,
+    "waitfanfare": _parse_beat_waitfanfare,
+    # Extended commands
+    "message": _parse_beat_message_cmd,
+    "wildbattle": _parse_beat_wildbattle,
+    "take": _parse_beat_take,
+    "random": _parse_beat_random,
+    "shop": _parse_beat_shop,
+    "braille": _parse_beat_braille,
+    "showmon": _parse_beat_showmon,
+    "hidemon": _parse_beat_hidemon,
+    "showmoney": _parse_beat_showmoney,
+    "showcoins": _parse_beat_showcoins,
+    "buffer": _parse_beat_buffer,
+    "tile": _parse_beat_tile,
+    "door": _parse_beat_door,
+    "stat": _parse_beat_stat,
+    "slots": _parse_beat_slots,
+    "getpos": _parse_beat_getpos,
 }
 
 
@@ -717,6 +907,61 @@ def _serialize_beat_gotoif(data, lines):
     lines.append(f"gotoif {data['flag']} {data['target']}")
 
 
+def _serialize_beat_page(data, lines):
+    pnum = data.get("page_num", 1)
+    cond = data.get("condition", "")
+    if cond:
+        lines.append(f"page {pnum} if {cond}")
+    else:
+        lines.append(f"page {pnum}")
+
+
+def _serialize_beat_condition(data, lines):
+    branch = data["branch"]
+    raw_cond = data.get("raw_condition", "")
+    if branch == "else":
+        lines.append("else")
+    else:
+        lines.append(f"{branch} {raw_cond}".rstrip())
+
+
+def _serialize_beat_endif(data, lines):
+    lines.append("endif")
+
+
+def _serialize_beat_switch(data, lines):
+    lines.append(f"switch {data['var']}")
+
+
+def _serialize_beat_case(data, lines):
+    lines.append(f"case {data['value']}")
+
+
+def _serialize_beat_endswitch(data, lines):
+    lines.append("endswitch")
+
+
+def _serialize_beat_choice(data, lines):
+    lines.append(f'choice "{data["prompt"]}"')
+
+
+def _serialize_beat_option(data, lines):
+    lines.append(f'option "{data["text"]}"')
+
+
+def _serialize_beat_endchoice(data, lines):
+    lines.append("endchoice")
+
+
+def _serialize_beat_check(data, lines):
+    ct = data["check_type"]
+    arg = data.get("argument", "")
+    if arg:
+        lines.append(f"check {ct} {arg}")
+    else:
+        lines.append(f"check {ct}")
+
+
 def _serialize_beat_flow(data, lines):
     ft = data["flow_type"]
     if ft in ("goto", "call"):
@@ -803,6 +1048,16 @@ _SERIALIZE_DISPATCH = {
     "special": _serialize_beat_special,
     "waitstate": _serialize_beat_waitstate,
     "gotoif": _serialize_beat_gotoif,
+    "page": _serialize_beat_page,
+    "condition": _serialize_beat_condition,
+    "endif": _serialize_beat_endif,
+    "switch": _serialize_beat_switch,
+    "case": _serialize_beat_case,
+    "endswitch": _serialize_beat_endswitch,
+    "choice": _serialize_beat_choice,
+    "option": _serialize_beat_option,
+    "endchoice": _serialize_beat_endchoice,
+    "check": _serialize_beat_check,
     "flow": _serialize_beat_flow,
     "battle": _serialize_beat_battle,
     "text": _serialize_beat_text,
@@ -1053,6 +1308,63 @@ def _summary_gotoif(data, ctag):
     return f"{ctag}gotoif {data['flag']} {data['target']}"
 
 
+def _summary_page(data, ctag):
+    pnum = data.get("page_num", 1)
+    cond = data.get("condition", "")
+    if cond:
+        cond_short = cond if len(cond) <= 30 else cond[:27] + "..."
+        return f"{ctag}Page {pnum} if {cond_short}"
+    return f"{ctag}Page {pnum} (default)"
+
+
+def _summary_condition(data, ctag):
+    branch = data["branch"]
+    raw_cond = data.get("raw_condition", "")
+    if branch == "else":
+        return f"{ctag}else"
+    cond_short = raw_cond if len(raw_cond) <= 40 else raw_cond[:37] + "..."
+    return f"{ctag}{branch} {cond_short}"
+
+
+def _summary_endif(data, ctag):
+    return f"{ctag}endif"
+
+
+def _summary_switch(data, ctag):
+    return f"{ctag}switch {data['var']}"
+
+
+def _summary_case(data, ctag):
+    return f"{ctag}case {data['value']}"
+
+
+def _summary_endswitch(data, ctag):
+    return f"{ctag}endswitch"
+
+
+def _summary_choice(data, ctag):
+    prompt = data.get("prompt", "")
+    if len(prompt) > 35:
+        prompt = prompt[:32] + "..."
+    return f'{ctag}choice "{prompt}"'
+
+
+def _summary_option(data, ctag):
+    return f'{ctag}option "{data.get("text", "")}"'
+
+
+def _summary_endchoice(data, ctag):
+    return f"{ctag}endchoice"
+
+
+def _summary_check(data, ctag):
+    ct = data.get("check_type", "")
+    arg = data.get("argument", "")
+    if arg:
+        return f"{ctag}check {ct} {arg}"
+    return f"{ctag}check {ct}"
+
+
 def _summary_flow(data, ctag):
     ft = data["flow_type"]
     t = data.get("target", "")
@@ -1140,6 +1452,16 @@ _SUMMARY_DISPATCH = {
     "special": _summary_special,
     "waitstate": _summary_waitstate,
     "gotoif": _summary_gotoif,
+    "page": _summary_page,
+    "condition": _summary_condition,
+    "endif": _summary_endif,
+    "switch": _summary_switch,
+    "case": _summary_case,
+    "endswitch": _summary_endswitch,
+    "choice": _summary_choice,
+    "option": _summary_option,
+    "endchoice": _summary_endchoice,
+    "check": _summary_check,
     "flow": _summary_flow,
     "battle": _summary_battle,
     "label": _summary_label,

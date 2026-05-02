@@ -1035,7 +1035,7 @@ def run_suite():
         manifest = UpgradeManifest()
         manifest.current_version = (1, 7, 4)
         manifest.target_version = (1, 14, 3)
-        manifest.snapshot_path = "/home/deck/ROMHacking/TORCH/backups/pre-upgrade.zip"
+        manifest.snapshot_path = os.path.expanduser("~/ROMHacking/TORCH/backups/pre-upgrade.zip")
         manifest.modified_vanilla_files = [{
             "rel_path": "include/constants/flags.h",
             "reason": "modified",

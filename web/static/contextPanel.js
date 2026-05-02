@@ -23,6 +23,7 @@ import {
   suspendTabs, restoreTabs, cleanupTabs,
 } from "./contextTabs.js";
 import { setViewContext } from "./viewContext.js";
+import { getVisibleBeatCount } from "./views/viz/beatList.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -193,6 +194,12 @@ function _wireVizEditorEvents() {
       });
     }});
   });
+
+  // Listen for Add Beat requests (from beat list 'a' key or control bar button)
+  document.addEventListener("beat-add-request", _onAddBeatRequest);
+  _vizEditorUnsubs.push({ cleanup: () => {
+    document.removeEventListener("beat-add-request", _onAddBeatRequest);
+  }});
 }
 
 function _unwireVizEditorEvents() {
@@ -223,6 +230,11 @@ async function _showBeatEditor() {
     dialogue: "dialogue", text: "dialogue",
     move: "movement", movement: "movement",
     emote: "emote", flag: "flag", var: "var",
+    page: "page",
+    condition: "condition", endif: "structural",
+    switch: "switchcase", case: "switchcase", endswitch: "structural",
+    choice: "choice", option: "choice", endchoice: "structural",
+    check: "check",
     sound: "sound", music: "sound", fanfare: "sound", cry: "sound",
     fade: "fade", flow: "flow", gotoif: "gotoif",
     battle: "battle", special: "special",
@@ -277,6 +289,271 @@ async function _showBeatEditor() {
   });
 
   cancelBtn.addEventListener("click", () => closeEditor());
+}
+
+// ---------------------------------------------------------------------------
+// Add Beat menu (right panel)
+// ---------------------------------------------------------------------------
+
+const ADD_CATEGORIES = [
+  { name: "Dialogue", items: [
+    { type: "msg", label: "Message (msg)" },
+    { type: "msgnpc", label: "Message NPC (msgnpc)" },
+    { type: "text", label: "Text block" },
+  ]},
+  { name: "NPC", items: [
+    { type: "emote", label: "Emote" },
+    { type: "faceplayer", label: "Face Player" },
+    { type: "hide", label: "Hide NPC" },
+    { type: "show", label: "Show NPC" },
+    { type: "setpos", label: "Teleport" },
+  ]},
+  { name: "Movement", items: [
+    { type: "move", label: "Move" },
+    { type: "movement", label: "Movement Block" },
+  ]},
+  { name: "Screen", items: [
+    { type: "fade", label: "Fade" },
+    { type: "shake", label: "Shake" },
+    { type: "sound", label: "Sound" },
+    { type: "music", label: "Music" },
+    { type: "fanfare", label: "Fanfare" },
+    { type: "cry", label: "Cry" },
+    { type: "pause", label: "Pause" },
+  ]},
+  { name: "Logic", items: [
+    { type: "condition", label: "If / Elif" },
+    { type: "endif", label: "End If" },
+    { type: "switch", label: "Switch" },
+    { type: "case", label: "Case" },
+    { type: "endswitch", label: "End Switch" },
+    { type: "choice", label: "Choice" },
+    { type: "option", label: "Option" },
+    { type: "endchoice", label: "End Choice" },
+    { type: "check", label: "Check" },
+    { type: "flag", label: "Flag" },
+    { type: "var", label: "Variable" },
+    { type: "gotoif", label: "Goto If (legacy)" },
+    { type: "flow", label: "Flow" },
+    { type: "special", label: "Special" },
+  ]},
+  { name: "Structure", items: [
+    { type: "page", label: "Page" },
+    { type: "label", label: "Label" },
+    { type: "lock", label: "Lock" },
+    { type: "closemessage", label: "Close Message" },
+    { type: "waitstate", label: "Wait State" },
+    { type: "battle", label: "Battle" },
+    { type: "give", label: "Give Item" },
+    { type: "pory", label: "Poryscript" },
+    { type: "raw", label: "Raw" },
+    { type: "comment", label: "Comment" },
+  ]},
+];
+
+const NEW_BEAT_DEFAULTS = {
+  msg: 'msg "Text here$"', msgnpc: 'msgnpc "Text here$"',
+  text: 'text NewText "Text here$"',
+  move: "player walk down 1", emote: "player emote !",
+  fade: "fade to_black", sound: "sound SE_SELECT",
+  music: "music MUS_DUMMY", fanfare: "fanfare MUS_FANFARE1",
+  cry: "cry SPECIES_NONE", pause: "pause 30",
+  page: "page 1",
+  condition: "if FLAG_TEMP_1", endif: "endif",
+  switch: "switch VAR_TEMP_0", case: "case 0",
+  endswitch: "endswitch", choice: 'choice "What will you do?"',
+  option: 'option "Yes"', endchoice: "endchoice",
+  check: "check item ITEM_POTION",
+  flag: "flag set FLAG_TEMP_1", var: "var set VAR_TEMP_1 0",
+  gotoif: "gotoif FLAG_TEMP_1 LabelName", flow: "end",
+  label: "label NewLabel", lock: "lock",
+  faceplayer: "faceplayer", closemessage: "closemessage",
+  waitstate: "waitstate", special: "special HealPlayerParty",
+  battle: "battle single TRAINER_FOE",
+  hide: "hide player", show: "show player",
+  setpos: "setpos player 0 0", shake: "shake",
+  movement: "movement player {}", pory: "pory {}",
+  raw: "raw nop", comment: "# Comment", give: "give ITEM_POTION 1",
+};
+
+let _addMenuEl = null;
+let _addMenuCleanup = null;
+
+function _onAddBeatRequest(e) {
+  const afterIndex = (e.detail && e.detail.afterIndex != null) ? e.detail.afterIndex : 0;
+  const position = (e.detail && e.detail.position) || "after";
+  _showAddBeatMenu(afterIndex, position);
+}
+
+function _showAddBeatMenu(afterIndex, position) {
+  _closeAddBeatMenu();
+  _expandIfCollapsed();
+
+  const el = _scriptsModeEl;
+  if (!el) return;
+
+  _setHeader(position === "before" ? "Insert Beat Before" : "Add Beat After");
+
+  let html = '<div class="ide-add-beat-menu">';
+  for (const cat of ADD_CATEGORIES) {
+    html += `<div class="ide-add-cat">${esc(cat.name)}</div>`;
+    for (const item of cat.items) {
+      html += `<div class="ide-add-item" data-type="${esc(item.type)}">${esc(item.label)}</div>`;
+    }
+  }
+  html += '</div>';
+  el.innerHTML = html;
+
+  const onClick = async (ev) => {
+    const itemEl = ev.target.closest(".ide-add-item");
+    if (!itemEl) return;
+
+    const type = itemEl.dataset.type;
+    const defaultLine = NEW_BEAT_DEFAULTS[type];
+    if (!defaultLine) return;
+
+    _closeAddBeatMenu();
+    await _showNewBeatEditor(type, defaultLine, afterIndex, position);
+  };
+
+  el.addEventListener("click", onClick);
+
+  const onKey = (ev) => {
+    if (ev.key === "Escape") {
+      _closeAddBeatMenu();
+      // Restore script info view
+      import("./views/viz/state.js").then(({ state }) => {
+        if (state.mapName && state.scriptName) {
+          _showScriptInfo(state.mapName, state.scriptName);
+        }
+      });
+    }
+  };
+  document.addEventListener("keydown", onKey);
+
+  _addMenuCleanup = () => {
+    el.removeEventListener("click", onClick);
+    document.removeEventListener("keydown", onKey);
+  };
+}
+
+function _closeAddBeatMenu() {
+  if (_addMenuCleanup) { _addMenuCleanup(); _addMenuCleanup = null; }
+}
+
+/**
+ * Show the beat editor for a NEW beat (not yet inserted).
+ * Renders the type-specific editor with empty/default data.
+ * Apply inserts the line; Cancel discards with no changes.
+ */
+async function _showNewBeatEditor(type, defaultLine, afterIndex, position) {
+  const el = _scriptsModeEl;
+  if (!el) return;
+
+  const TYPE_MODULE = {
+    dialogue: "dialogue", text: "dialogue",
+    move: "movement", movement: "movement",
+    emote: "emote", flag: "flag", var: "var",
+    page: "page",
+    condition: "condition", endif: "structural",
+    switch: "switchcase", case: "switchcase", endswitch: "structural",
+    choice: "choice", option: "choice", endchoice: "structural",
+    check: "check",
+    sound: "sound", music: "sound", fanfare: "sound", cry: "sound",
+    fade: "fade", flow: "flow", gotoif: "gotoif",
+    battle: "battle", special: "special",
+    lock: "simple", faceplayer: "simple",
+    closemessage: "simple", waitstate: "simple",
+    label: "label", pause: "pause", shake: "shake",
+    hide: "visibility", show: "visibility",
+    setpos: "position", give: "give", comment: "comment",
+  };
+  const moduleName = TYPE_MODULE[type] || "generic";
+
+  _setHeader(position === "before" ? `Insert: ${type}` : `Add: ${type}`);
+
+  el.innerHTML = `<div class="ide-beat-editor-body" id="ide-beat-ed-body"></div>
+    <div style="display:flex;gap:0.4rem;margin-top:0.5rem;padding:0 0.2rem">
+      <button id="ide-beat-ed-apply" style="flex:1;padding:0.3rem;font-size:0.78rem;font-weight:600;
+        background:var(--accent);color:#111;border:none;border-radius:4px;cursor:pointer">${position === "before" ? "Insert" : "Add"}</button>
+      <button id="ide-beat-ed-cancel" style="flex:1;padding:0.3rem;font-size:0.78rem;
+        background:var(--surface-2);color:var(--text-secondary);border:1px solid var(--border-subtle);
+        border-radius:4px;cursor:pointer">Cancel</button>
+    </div>`;
+
+  const bodyEl = document.getElementById("ide-beat-ed-body");
+  const applyBtn = document.getElementById("ide-beat-ed-apply");
+  const cancelBtn = document.getElementById("ide-beat-ed-cancel");
+
+  const helpers = await _buildEditorHelpers();
+
+  // Synthetic beat with empty data — editors treat missing fields as defaults
+  const syntheticBeat = { type, data: {} };
+
+  let mod;
+  try {
+    mod = await import(`./views/viz/editors/${moduleName}.js`);
+  } catch {
+    try { mod = await import("./views/viz/editors/generic.js"); } catch { return; }
+  }
+
+  const editor = mod.render(bodyEl, syntheticBeat, helpers);
+
+  const _restoreView = () => {
+    import("./views/viz/state.js").then(({ state }) => {
+      if (state.mapName && state.scriptName) {
+        _showScriptInfo(state.mapName, state.scriptName);
+      }
+    });
+  };
+
+  applyBtn.addEventListener("click", async () => {
+    if (!editor) return;
+    // Get the edited text from the editor, fall back to the default line
+    let newText = editor.apply();
+    if (newText == null) newText = defaultLine;
+
+    const { state, resimulate, setDirty, goToBeat } = await import("./views/viz/state.js");
+    const { pushHistory } = await import("./views/viz/history.js");
+
+    pushHistory(state.source);
+
+    const frame = state.frames[afterIndex];
+    let insertLine;
+    if (frame && frame.beat) {
+      if (position === "before") {
+        // Insert before: use the beat's start line
+        insertLine = frame.beat.source_line;
+      } else {
+        // Insert after: use the line after the beat ends
+        insertLine = frame.beat.source_end_line != null
+          ? frame.beat.source_end_line
+          : frame.beat.source_line + 1;
+      }
+    } else {
+      insertLine = state.source.split("\n").length;
+    }
+
+    const lines = state.source.split("\n");
+    lines.splice(insertLine, 0, ...newText.split("\n"));
+    await resimulate(lines.join("\n"));
+    setDirty(true);
+
+    // Select the newly inserted beat
+    let newIdx = -1;
+    for (let i = 0; i < state.frames.length; i++) {
+      if (state.frames[i].beat && state.frames[i].beat.source_line === insertLine) {
+        newIdx = i;
+        break;
+      }
+    }
+    if (newIdx < 0) newIdx = afterIndex + 1;
+    if (newIdx >= 0 && newIdx < state.frames.length) goToBeat(newIdx);
+
+    _restoreView();
+  });
+
+  cancelBtn.addEventListener("click", _restoreView);
 }
 
 async function _buildEditorHelpers() {
@@ -405,7 +682,7 @@ function _showScriptInfo(mapName, scriptName) {
       html += `<h4>Scene</h4>`;
       html += _propRow("Map", mapName);
       html += _propRow("Script", scriptName);
-      html += _propRow("Beats", `${beat + 1} / ${frameCount}`);
+      html += _propRow("Beats", `${beat + 1} / ${getVisibleBeatCount() || frameCount}`);
       if (castNames.length > 0) html += _propRow("Cast", castNames.join(", "));
       html += `</div>`;
 
@@ -511,7 +788,7 @@ function _setHeader(title) {
     _scriptsModeEl._vizCleanup = null;
   }
   if (_headerEl) {
-    _headerEl.innerHTML = `<button class="ide-right-collapse" title="Collapse panel">\u25B6</button><h3>${esc(title)}</h3>`;
+    _headerEl.innerHTML = `<button class="ide-right-collapse" title="Collapse panel">\u203A</button><h3>${esc(title)}</h3>`;
     _headerEl.querySelector(".ide-right-collapse").addEventListener("click", _toggleCollapse);
   }
 }
@@ -525,7 +802,7 @@ function _toggleCollapse() {
   if (handle) handle.style.display = collapsed ? "none" : "";
 
   const btn = _headerEl?.querySelector(".ide-right-collapse");
-  if (btn) btn.textContent = collapsed ? "\u25C0" : "\u25B6";
+  if (btn) btn.textContent = collapsed ? "\u2039" : "\u203A";
 }
 
 function _expandIfCollapsed() {
@@ -535,7 +812,7 @@ function _expandIfCollapsed() {
   right.classList.remove("collapsed");
   if (handle) handle.style.display = "";
   const btn = _headerEl?.querySelector(".ide-right-collapse");
-  if (btn) btn.textContent = "\u25B6";
+  if (btn) btn.textContent = "\u203A";
 }
 
 function _propRow(label, value) {

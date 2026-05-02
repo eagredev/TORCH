@@ -5,8 +5,75 @@ import re
 
 from torch.data import (
     BUILTIN_EMOTES, COMMON_EMOTES, COMMON_FACE,
+    COMMON_WALK_IN_PLACE_FASTER, COMMON_WALK, COMMON_WALK_SLOW,
+    COMMON_WALK_FAST, COMMON_WALK_FASTER, COMMON_DELAY,
     WALK_COMMANDS, JUMP_COMMANDS, JUMP2_COMMANDS,
 )
+
+# Known Poryscript commands that should be treated as explicit pory passthrough
+# rather than accidental fallthrough. Mirrors inc_decompiler's command tables.
+_KNOWN_PORY_COMMANDS = {
+    # Variable ops (copyvar/addvar/subvar now have native TorScript)
+    "setorcopyvar", "callnative",
+    # Object/actor ops (actor resolution applied)
+    "turnobject", "turnvobject",
+    "setobjectxyperm", "setobjectmovementtype", "setobjectsubpriority",
+    "resetobjectsubpriority",
+    # Warps
+    "warp", "warpsilent", "warpdoor", "warphole", "warpteleport", "warpwhitefade",
+    "setwarp", "setdynamicwarp", "setescapewarp", "setholewarp", "setdivewarp",
+    # Map manipulation (setmetatile now has native `tile` command)
+    "setweather", "setmaplayoutindex",
+    # Messages (non-msgbox) — multichoice stays pory (hardcoded list IDs)
+    "multichoice", "multichoicedefault",
+    # Items / money / coins (checkitem/removeitem/pokemart now native)
+    "additem", "checkitemtype",
+    "addmoney", "removemoney",
+    "checkcoins", "addcoins", "removecoins",
+    # Audio (extended)
+    "fadescreenspeed", "fadescreenswapbuffers",
+    # Visuals (showmonpic now native `showmon`)
+    "createvobject",
+    "dofieldeffect", "dofieldeffectsparkle", "waitfieldeffect",
+    "setfieldeffectargument",
+    "animateflash", "setflashlevel",
+    # Pokemon (setwildbattle/dowildbattle now native)
+    "givemon", "giveegg", "seteventmon",
+    # Trainer flags
+    "cleartrainerflag", "settrainerflag",
+    # Buffers (common ones now native `buffer` command)
+    "bufferitemnameplural", "bufferstdstring", "bufferpartymonnick",
+    # Misc
+    "setstepcallback", "register_matchcall",
+    "setrespawn", "compare", "hidefollower",
+    # Minigames
+    "playslotmachine",
+    # (pokemartdecoration now handled as shop LIST decoration)
+    # Frontier
+    "frontier_results", "frontier_get", "frontier_checkvisittrainer",
+    "dome_get", "dome_getwinnersname", "dome_showprevtourneytree",
+    "pike_gethint", "pike_getroomtype",
+    "trainerhill_getownerstate", "trainerhill_inchallenge", "trainerhill_settrainerflags",
+    "fallarbortent_getprize", "verdanturftent_getprize", "slateporttent_getprize",
+    "showcontestpainting", "givedecoration", "getpokenewsactive",
+}
+
+# Known Poryscript bare keywords (no args) that should be explicit pory passthrough
+# (only truly niche commands that have no TorScript equivalent)
+_KNOWN_BARE_COMMANDS = {
+    "doweather", "hideplayer", "showplayer",
+    "dotimebasedevents",
+}
+
+# Actor-reference argument positions for known commands (0-indexed positions
+# that contain LOCALID_* references needing resolution)
+_ACTOR_ARG_POSITIONS = {
+    "turnobject": [0], "turnvobject": [0],
+    "hideobjectat": [0], "showobjectat": [0],
+    "setobjectxyperm": [0], "setobjectmovementtype": [0],
+    "setobjectsubpriority": [0], "resetobjectsubpriority": [0],
+    "copyobjectxytoperm": [0],
+}
 
 # ============================================================
 # REVERSE LOOKUP TABLES (auto-derived from data.py)
@@ -15,6 +82,11 @@ from torch.data import (
 _REV_COMMON_FACE = {v: k for k, v in COMMON_FACE.items()}
 _REV_COMMON_EMOTES = {v: k for k, v in COMMON_EMOTES.items()}
 _REV_BUILTIN_EMOTES = {v: k for k, v in BUILTIN_EMOTES.items()}
+_REV_WALK_IN_PLACE_FASTER = {v: k for k, v in COMMON_WALK_IN_PLACE_FASTER.items()}
+_REV_COMMON_WALK = {v: ("walk", k) for k, v in COMMON_WALK.items()}
+_REV_COMMON_WALK.update({v: ("walkslow", k) for k, v in COMMON_WALK_SLOW.items()})
+_REV_COMMON_WALK.update({v: ("walkfast", k) for k, v in COMMON_WALK_FAST.items()})
+_REV_COMMON_WALK.update({v: ("walkfast", k) for k, v in COMMON_WALK_FASTER.items()})
 
 # WALK_COMMANDS maps TorScript name -> pory prefix: {"walk": "walk", "walkfast": "walk_fast", ...}
 # We want pory prefix -> canonical TorScript name (skip "run" since it's an alias for walkfast)
@@ -36,6 +108,114 @@ _REV_FADE = {
 
 
 # ============================================================
+# CONDITION EXPRESSION REVERSAL
+# ============================================================
+
+def _reverse_condition(expr):
+    """Convert a Poryscript condition expression back to TorScript.
+
+    flag(FLAG_X)           -> FLAG_X
+    !flag(FLAG_X)          -> not FLAG_X
+    var(VAR_X) == VALUE    -> VAR_X == VALUE
+    !(var(VAR_X) == VALUE) -> not VAR_X == VALUE
+    defeated(TRAINER_X)    -> defeated TRAINER_X
+    !defeated(TRAINER_X)   -> not defeated TRAINER_X
+    A && B                 -> A and B
+    A || B                 -> A or B
+    """
+    expr = expr.strip()
+
+    # Compound: A && B or A || B (split on top-level operator only)
+    parts, op = _split_compound(expr)
+    if parts:
+        left = _reverse_condition(parts[0])
+        right = _reverse_condition(parts[1])
+        ts_op = "and" if op == "&&" else "or"
+        return f"{left} {ts_op} {right}"
+
+    # Negated wrapper: !(...)
+    if expr.startswith("!(") and expr.endswith(")"):
+        inner = expr[2:-1]
+        return f"not {_reverse_condition(inner)}"
+
+    # Negated flag: !flag(X)
+    m = re.match(r'^!flag\((\w+)\)$', expr)
+    if m:
+        return f"not {m.group(1)}"
+
+    # flag(X)
+    m = re.match(r'^flag\((\w+)\)$', expr)
+    if m:
+        return m.group(1)
+
+    # Negated defeated: !defeated(X)
+    m = re.match(r'^!defeated\((\w+)\)$', expr)
+    if m:
+        return f"not defeated {m.group(1)}"
+
+    # defeated(X)
+    m = re.match(r'^defeated\((\w+)\)$', expr)
+    if m:
+        return f"defeated {m.group(1)}"
+
+    # var(VAR_X) OP VALUE
+    m = re.match(r'^var\((\w+)\)\s*(==|!=|<=|>=|<|>)\s*(\w+)$', expr)
+    if m:
+        return f"{m.group(1)} {m.group(2)} {m.group(3)}"
+
+    # Fallback — return as-is (handles already-simple expressions)
+    return expr
+
+
+def _split_compound(expr):
+    """Split a compound condition on top-level && or ||.
+
+    Returns (parts_list, operator) or (None, None) if not compound.
+    Only splits on the first top-level operator to allow recursive handling.
+    """
+    depth = 0
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        elif depth == 0:
+            if expr[i:i+2] == '&&':
+                return [expr[:i].strip(), expr[i+2:].strip()], '&&'
+            if expr[i:i+2] == '||':
+                return [expr[:i].strip(), expr[i+2:].strip()], '||'
+        i += 1
+    return None, None
+
+
+# ============================================================
+# ACTOR RESOLUTION HELPERS
+# ============================================================
+
+def _resolve_actors_in_args(args_str, state, positions=None):
+    """Resolve LOCALID_* and OBJ_EVENT_ID_PLAYER in comma-separated args.
+
+    If positions is given, only resolve args at those 0-indexed positions.
+    Otherwise resolve all args that look like actor references.
+    """
+    parts = [a.strip() for a in args_str.split(',')]
+    resolved = []
+    for idx, part in enumerate(parts):
+        if positions is not None:
+            if idx in positions:
+                resolved.append(_resolve_actor_reverse(part, state))
+            else:
+                resolved.append(part)
+        elif part.startswith('LOCALID_') or part == 'OBJ_EVENT_ID_PLAYER':
+            resolved.append(_resolve_actor_reverse(part, state))
+        else:
+            resolved.append(part)
+    return ', '.join(resolved)
+
+
+# ============================================================
 # DECOMPILER STATE
 # ============================================================
 
@@ -48,6 +228,8 @@ class DecompilerState:
         self.text_blocks = {}        # label -> content
         self.auto_move_labels = set()  # MapName_Move_N labels
         self.auto_labels = set()     # MapName_BagFull etc.
+        self.auto_text_labels = set()  # text blocks consumed by trainerbattle inlining
+        self.call_targets = {}       # label → list of caller labels
         self.script_blocks_raw = []  # [(label, [body_lines])] from Pass 1
         self.script_blocks_decompiled = []  # [(label, [torscript_lines])]
         self.mapscripts_labels = []
@@ -117,7 +299,8 @@ def _parse_pory_structure(pory_text, state):
         m = re.match(r'^mapscripts\s+(\w+)\s*\{', line)
         if m:
             label = m.group(1)
-            state.mapscripts_labels.append(label)
+            if label not in state.mapscripts_labels:
+                state.mapscripts_labels.append(label)
             _, end = _extract_block_body(lines, i)
             i = end + 1
             continue
@@ -276,6 +459,21 @@ def _resolve_movement(actor_ts, label, state):
         emote = _REV_COMMON_EMOTES[label]
         return [f"{actor_ts} emote {emote}"]
 
+    # Common_Movement WalkInPlaceFaster → face (visually equivalent)
+    if label in _REV_WALK_IN_PLACE_FASTER:
+        direction = _REV_WALK_IN_PLACE_FASTER[label]
+        return [f"{actor_ts} face {direction}"]
+
+    # Common_Movement single-step walks (Walk, WalkSlow, WalkFast, WalkFaster)
+    if label in _REV_COMMON_WALK:
+        cmd, direction = _REV_COMMON_WALK[label]
+        return [f"{actor_ts} {cmd} {direction} 1"]
+
+    # Common_Movement delays
+    if label in COMMON_DELAY:
+        frames = COMMON_DELAY[label]
+        return [f"pause {frames}"]
+
     # Auto-generated movement blocks — try to inline
     if label in state.auto_move_labels and label in state.movement_blocks:
         cmds = state.movement_blocks[label]
@@ -389,22 +587,122 @@ def _try_release(body, i, state):
     return None, 0
 
 
-def _try_gotoif(body, i, state):
-    """Match: if (flag(F)) { / goto(L) / }"""
-    if i + 2 >= len(body):
-        return None, 0
-    l0 = body[i]
-    m = re.match(r'^if\s*\(flag\((\w+)\)\)\s*\{$', l0)
+def _try_conditional_jump(body, i, state):
+    """Match conditional goto/call patterns:
+
+    if (CONDITION) {
+        goto(LABEL)
+    }
+    → gotoif CONDITION LABEL
+
+    if (CONDITION) {
+        call(LABEL)
+    }
+    → if CONDITION / call LABEL / endif
+
+    Also handles } elif and } else chains for full if/elif/else/endif blocks.
+    """
+    l0 = body[i].strip()
+
+    # Must start with if (...)
+    m = re.match(r'^if\s*\((.+)\)\s*\{$', l0)
     if not m:
         return None, 0
-    l1 = body[i + 1].strip()
-    m1 = re.match(r'^goto\((\w+)\)$', l1)
-    if not m1:
+
+    condition_expr = m.group(1)
+
+    # Collect branches: [(condition_or_None, body_lines)]
+    # Must track brace depth to handle nested if/switch blocks
+    branches = []
+    j = i + 1
+    current_body = []
+    depth = 0  # extra depth from nested braces within the body
+
+    while j < len(body):
+        line = body[j].strip()
+
+        # Count braces to track nesting depth
+        line_opens = line.count('{')
+        line_closes = line.count('}')
+
+        if depth > 0:
+            # We're inside a nested block — just collect lines
+            current_body.append(line)
+            depth += line_opens - line_closes
+            j += 1
+            continue
+
+        # At top level of this if-block
+        if line_opens > 0 and not re.match(r'^\}\s*(elif|else)\s', line):
+            # Opening a nested block (inner if, switch, etc.)
+            current_body.append(line)
+            depth += line_opens - line_closes
+            j += 1
+            continue
+
+        # Check for } (end of block), } elif (...) {, or } else {
+        if line == '}':
+            branches.append((condition_expr, current_body))
+            j += 1
+            break
+        elif re.match(r'^\}\s*elif\s*\((.+)\)\s*\{$', line):
+            branches.append((condition_expr, current_body))
+            current_body = []
+            condition_expr = re.match(r'^\}\s*elif\s*\((.+)\)\s*\{$', line).group(1)
+            j += 1
+            continue
+        elif re.match(r'^\}\s*else\s*\{$', line):
+            branches.append((condition_expr, current_body))
+            current_body = []
+            condition_expr = None  # else branch
+            j += 1
+            continue
+        else:
+            current_body.append(line)
+            j += 1
+            continue
+
+    if not branches:
         return None, 0
-    l2 = body[i + 2].strip()
-    if l2 != "}":
-        return None, 0
-    return f"gotoif {m.group(1)} {m1.group(1)}", 3
+
+    consumed = j - i
+
+    # Special case: single branch with single goto → gotoif
+    if len(branches) == 1:
+        cond, body_lines = branches[0]
+        body_lines = [l for l in body_lines if l.strip()]
+        if len(body_lines) == 1:
+            m_goto = re.match(r'^goto\((\w+)\)$', body_lines[0])
+            if m_goto:
+                ts_cond = _reverse_condition(cond)
+                return f"gotoif {ts_cond} {m_goto.group(1)}", consumed
+            m_call = re.match(r'^call\((\w+)\)$', body_lines[0])
+            if m_call:
+                ts_cond = _reverse_condition(cond)
+                return [
+                    f"if {ts_cond}",
+                    f"call {m_call.group(1)}",
+                    "endif",
+                ], consumed
+
+    # General case: full if/elif/else/endif block
+    result = []
+    for idx, (cond, branch_body) in enumerate(branches):
+        if idx == 0:
+            ts_cond = _reverse_condition(cond)
+            result.append(f"if {ts_cond}")
+        elif cond is None:
+            result.append("else")
+        else:
+            ts_cond = _reverse_condition(cond)
+            result.append(f"elif {ts_cond}")
+
+        # Recursively decompile the branch body
+        branch_ts = _decompile_body(branch_body, state)
+        result.extend(branch_ts)
+
+    result.append("endif")
+    return result, consumed
 
 
 def _try_movement(body, i, state):
@@ -468,6 +766,202 @@ def _try_movement(body, i, state):
         return [" + ".join(parts)], total
 
 
+def _try_switch(body, i, state):
+    """Match: switch (var(VAR)) { case N: ... default: ... }"""
+    l0 = body[i].strip()
+    m = re.match(r'^switch\s*\(var\((\w+)\)\)\s*\{$', l0)
+    if not m:
+        return None, 0
+
+    var_name = m.group(1)
+    result = [f"switch {var_name}"]
+
+    j = i + 1
+    current_case_label = None
+    current_body = []
+
+    while j < len(body):
+        line = body[j].strip()
+
+        if line == '}':
+            # Flush last case
+            if current_case_label is not None:
+                result.append(current_case_label)
+                branch_ts = _decompile_body(current_body, state)
+                result.extend(branch_ts)
+            j += 1
+            break
+
+        m_case = re.match(r'^case\s+(\w+):$', line)
+        m_default = line == 'default:'
+
+        if m_case or m_default:
+            # Flush previous case
+            if current_case_label is not None:
+                result.append(current_case_label)
+                branch_ts = _decompile_body(current_body, state)
+                result.extend(branch_ts)
+            current_body = []
+            if m_case:
+                current_case_label = f"case {m_case.group(1)}"
+            else:
+                current_case_label = "default"
+            j += 1
+            continue
+
+        current_body.append(line)
+        j += 1
+
+    result.append("endswitch")
+    consumed = j - i
+    return result, consumed
+
+
+def _try_choice_yesno(body, i, state):
+    """Match: msgbox("text", MSGBOX_YESNO) + if/else → choice/option/endchoice"""
+    l0 = body[i].strip()
+    parsed = _parse_msgbox(l0)
+    if not parsed:
+        return None, 0
+    text, msg_type = parsed
+    if msg_type != "MSGBOX_YESNO":
+        return None, 0
+
+    # Must be followed by if (var(VAR_RESULT) == YES) { ... } else { ... }
+    if i + 1 >= len(body):
+        return None, 0
+    l1 = body[i + 1].strip()
+    m = re.match(r'^if\s*\(var\(VAR_RESULT\)\s*==\s*YES\)\s*\{$', l1)
+    if not m:
+        return None, 0
+
+    # Use _try_conditional_jump to parse the if/else block
+    ts_block, block_consumed = _try_conditional_jump(body, i + 1, state)
+    if ts_block is None:
+        return None, 0
+
+    # ts_block should be a list: ["if ...", ...body..., "else", ...body..., "endif"]
+    if not isinstance(ts_block, list):
+        return None, 0
+
+    # Extract branches from the ts_block
+    result = [f'choice "{text}"']
+    in_yes = False
+    in_no = False
+    for line in ts_block:
+        stripped = line.strip() if isinstance(line, str) else line
+        if stripped.startswith("if "):
+            result.append('option "Yes"')
+            in_yes = True
+            continue
+        if stripped == "else":
+            result.append('option "No"')
+            in_yes = False
+            in_no = True
+            continue
+        if stripped == "endif":
+            continue
+        result.append(stripped)
+    result.append("endchoice")
+
+    consumed = 1 + block_consumed  # msgbox line + if/else block
+    return result, consumed
+
+
+def _try_compare_goto(body, i, state):
+    """Match: compare(VAR, VALUE) + goto_if_OP(LABEL) → gotoif VAR OP VALUE LABEL"""
+    if i + 1 >= len(body):
+        return None, 0
+    l0 = body[i].strip()
+    l1 = body[i + 1].strip()
+
+    m0 = re.match(r'^compare\((\w+),\s*(\w+)\)$', l0)
+    if not m0:
+        return None, 0
+
+    var_name = m0.group(1)
+    value = m0.group(2)
+
+    # Map goto_if_OP to comparison operator
+    op_map = {
+        'goto_if_eq': '==', 'goto_if_ne': '!=',
+        'goto_if_lt': '<', 'goto_if_le': '<=',
+        'goto_if_gt': '>', 'goto_if_ge': '>=',
+    }
+    m1 = re.match(r'^(goto_if_\w+)\((\w+)\)$', l1)
+    if not m1:
+        return None, 0
+    op_name = m1.group(1)
+    label = m1.group(2)
+    op = op_map.get(op_name)
+    if not op:
+        return None, 0
+    return f"gotoif {var_name} {op} {value} {label}", 2
+
+
+def _try_trainerbattle_text(body, i, state):
+    """Match trainerbattle_*(TRAINER, TextLabel1, TextLabel2) and inline text if available.
+
+    Also detects postbattle: trainerbattle + msgbox(..., MSGBOX_AUTOCLOSE).
+    """
+    l0 = body[i].strip()
+    m = re.match(r'^(trainerbattle_\w+)\((.+)\)$', l0)
+    if not m:
+        return None, 0
+
+    battle_type = m.group(1)
+    args = [a.strip() for a in m.group(2).split(',')]
+
+    # Only inline text for battle types with 2+ text label args
+    # trainerbattle_single(TRAINER, IntroLabel, DefeatLabel)
+    # trainerbattle_double(TRAINER, IntroLabel, DefeatLabel, OnlyOneMonLabel)
+    if len(args) < 3:
+        return None, 0
+
+    trainer = args[0]
+    intro_label = args[1]
+    defeat_label = args[2]
+
+    # Look up text blocks
+    intro_text = state.text_blocks.get(intro_label)
+    defeat_text = state.text_blocks.get(defeat_label)
+
+    if intro_text is None and defeat_text is None:
+        return None, 0  # Can't inline — keep original form
+
+    consumed = 1
+    result_lines = [f"{battle_type} {trainer}"]
+
+    def _strip_text(t):
+        if t.endswith("$"):
+            t = t[:-1]
+        return t
+
+    if intro_text is not None:
+        result_lines.append(f'  intro "{_strip_text(intro_text)}"')
+        state.auto_text_labels.add(intro_label)
+    else:
+        result_lines.append(f'  intro {intro_label}')
+
+    if defeat_text is not None:
+        result_lines.append(f'  defeated "{_strip_text(defeat_text)}"')
+        state.auto_text_labels.add(defeat_label)
+    else:
+        result_lines.append(f'  defeated {defeat_label}')
+
+    # Check for postbattle: msgbox(..., MSGBOX_AUTOCLOSE) on next line
+    if i + 1 < len(body):
+        next_line = body[i + 1].strip()
+        parsed = _parse_msgbox(next_line)
+        if parsed:
+            post_text, post_type = parsed
+            if post_type == "MSGBOX_AUTOCLOSE":
+                result_lines.append(f'  postbattle "{post_text}"')
+                consumed = 2
+
+    return result_lines, consumed
+
+
 # Multi-line handlers in priority order
 _MULTI_LINE_HANDLERS = [
     _try_shake,
@@ -475,8 +969,12 @@ _MULTI_LINE_HANDLERS = [
     _try_fanfare,
     _try_end,
     _try_release,
+    _try_choice_yesno,
+    _try_compare_goto,
+    _try_trainerbattle_text,
     _try_movement,
-    _try_gotoif,
+    _try_switch,
+    _try_conditional_jump,
 ]
 
 
@@ -505,10 +1003,31 @@ def _handle_single_line(line, state):
         return "release"
     if line == "releaseall":
         return "end"
+    # Wait/sync commands → first-class beat types
     if line == "waitmessage":
-        return "pory waitmessage"
+        return "waitmessage"
     if line == "waitbuttonpress":
-        return "pory waitbuttonpress"
+        return "waitbutton"
+    if line == "waitse":
+        return "waitse"
+    if line == "waitmoncry":
+        return "waitmoncry"
+    if line == "waitdooranim":
+        return "door wait"
+    if line == "checkplayergender":
+        return "check gender"
+    if line == "getpartysize":
+        return "check partysize"
+    if line == "hidemonpic":
+        return "hidemon"
+    if line == "dowildbattle":
+        return "wildbattle start"
+    if line == "waitfanfare":
+        return "waitfanfare"
+
+    # Known bare Poryscript commands → explicit pory passthrough
+    if line in _KNOWN_BARE_COMMANDS:
+        return f"pory {line}"
 
     # msgbox
     parsed = _parse_msgbox(line)
@@ -537,10 +1056,17 @@ def _handle_single_line(line, state):
     if m:
         return f"music {m.group(1)}"
 
-    # playmoncry
-    m = re.match(r'^playmoncry\((\w+),\s*CRY_MODE_NORMAL\)$', line)
+    # playmoncry (extended: CRY_MODE_NORMAL, ENCOUNTER, FAINT)
+    m = re.match(r'^playmoncry\((\w+),\s*(\w+)\)$', line)
     if m:
-        return f"cry {m.group(1)}"
+        species, mode = m.group(1), m.group(2)
+        if mode == "CRY_MODE_NORMAL":
+            return f"cry {species}"
+        elif mode == "CRY_MODE_ENCOUNTER":
+            return f"cry {species} encounter"
+        elif mode == "CRY_MODE_FAINT":
+            return f"cry {species} faint"
+        return f"pory playmoncry({species}, {mode})"
 
     # delay
     m = re.match(r'^delay\((\d+)\)$', line)
@@ -655,10 +1181,262 @@ def _handle_single_line(line, state):
         if len(args) == 3:
             return f"multi 2v1_fixed {' '.join(args)}"
 
+    # ── New TorScript reversals ──────────────────────────────────
+
+    # specialvar(VAR, Func) → special Func VAR (with optional @ comment)
+    m = re.match(r'^specialvar\((\w+),\s*(\w+)(?:\s*@.*)?\)$', line)
+    if m:
+        return f"special {m.group(2)} {m.group(1)}"
+
+    # message(Label) → message "text" if text block available, else message Label
+    m = re.match(r'^message\((\w+)\)$', line)
+    if m:
+        label = m.group(1)
+        text = state.text_blocks.get(label)
+        if text:
+            state.auto_text_labels.add(label)
+            return f'message "{text.rstrip("$")}"'
+        return f"message {label}"
+
+    # copyvar(A, B) → var A = B
+    m = re.match(r'^copyvar\((\w+),\s*(\w+)\)$', line)
+    if m:
+        return f"var {m.group(1)} = {m.group(2)}"
+
+    # addvar(A, N) → var A + N
+    m = re.match(r'^addvar\((\w+),\s*(\w+)\)$', line)
+    if m:
+        return f"var {m.group(1)} + {m.group(2)}"
+
+    # subvar(A, N) → var A - N
+    m = re.match(r'^subvar\((\w+),\s*(\w+)\)$', line)
+    if m:
+        return f"var {m.group(1)} - {m.group(2)}"
+
+    # checkitem(ITEM) or checkitem(ITEM, COUNT) → check item ITEM
+    m = re.match(r'^checkitem\((\w+)(?:,\s*\w+)?\)$', line)
+    if m:
+        return f"check item {m.group(1)}"
+
+    # checkmoney(AMOUNT) → check money AMOUNT
+    m = re.match(r'^checkmoney\((\w+)\)$', line)
+    if m:
+        return f"check money {m.group(1)}"
+
+    # checkbadge(BADGE) → check badge BADGE
+    m = re.match(r'^checkbadge\((\w+)\)$', line)
+    if m:
+        return f"check badge {m.group(1)}"
+
+    # setwildbattle(SPECIES, LEVEL) → wildbattle SPECIES LEVEL
+    m = re.match(r'^setwildbattle\((.+)\)$', line)
+    if m:
+        args = [a.strip() for a in m.group(1).split(',')]
+        if len(args) >= 2:
+            return f"wildbattle {' '.join(args)}"
+
+    # removeitem(ITEM) or removeitem(ITEM, QTY) → take ITEM [QTY]
+    m = re.match(r'^removeitem\((\w+)(?:,\s*(\w+))?\)$', line)
+    if m:
+        item = m.group(1)
+        qty = m.group(2)
+        if qty and qty != "1":
+            return f"take {item} {qty}"
+        return f"take {item}"
+
+    # giveitem(ITEM) standalone (no compare/goto) → give ITEM
+    m = re.match(r'^giveitem\((\w+)(?:,\s*(\w+))?\)$', line)
+    if m:
+        item = m.group(1)
+        qty = m.group(2)
+        if qty and qty != "1":
+            return f"give {item} {qty}"
+        return f"give {item}"
+
+    # random(N) → random N
+    m = re.match(r'^random\((\w+)\)$', line)
+    if m:
+        return f"random {m.group(1)}"
+
+    # pokemart(LIST) → shop LIST
+    m = re.match(r'^pokemart\((\w+)\)$', line)
+    if m:
+        return f"shop {m.group(1)}"
+
+    # braillemsgbox(Label) → braille "text" if available, else braille Label
+    m = re.match(r'^braillemsgbox\((\w+)\)$', line)
+    if m:
+        label = m.group(1)
+        text = state.text_blocks.get(label)
+        if text:
+            state.auto_text_labels.add(label)
+            return f'braille "{text.rstrip("$")}"'
+        return f"braille {label}"
+
+    # braillemessage(Label) → same treatment
+    m = re.match(r'^braillemessage\((\w+)\)$', line)
+    if m:
+        label = m.group(1)
+        text = state.text_blocks.get(label)
+        if text:
+            state.auto_text_labels.add(label)
+            return f'braille "{text.rstrip("$")}"'
+        return f"braille {label}"
+
+    # showmonpic(SPECIES, X, Y) → showmon SPECIES
+    m = re.match(r'^showmonpic\((\w+),\s*\w+,\s*\w+\)$', line)
+    if m:
+        return f"showmon {m.group(1)}"
+
+    # showmoneybox(X, Y) → showmoney
+    m = re.match(r'^showmoneybox\(\w+,\s*\w+\)$', line)
+    if m:
+        return "showmoney"
+
+    # showcoinsbox(X, Y) → showcoins
+    m = re.match(r'^showcoinsbox\(\w+,\s*\w+\)$', line)
+    if m:
+        return "showcoins"
+
+    # opendoor(X, Y) → door open X Y
+    m = re.match(r'^opendoor\((\w+),\s*(\w+)\)$', line)
+    if m:
+        return f"door open {m.group(1)} {m.group(2)}"
+
+    # closedoor(X, Y) → door close X Y
+    m = re.match(r'^closedoor\((\w+),\s*(\w+)\)$', line)
+    if m:
+        return f"door close {m.group(1)} {m.group(2)}"
+
+    # setmetatile(X, Y, TILE, COLLISION) → tile X Y TILE COLLISION
+    m = re.match(r'^setmetatile\((.+)\)$', line)
+    if m:
+        args = [a.strip() for a in m.group(1).split(',')]
+        if len(args) >= 4:
+            return f"tile {' '.join(args)}"
+
+    # incrementgamestat(STAT) → stat STAT
+    m = re.match(r'^incrementgamestat\((\w+)\)$', line)
+    if m:
+        return f"stat {m.group(1)}"
+
+    # playslotmachine(VAR) → slots VAR
+    m = re.match(r'^playslotmachine\((\w+)\)$', line)
+    if m:
+        return f"slots {m.group(1)}"
+
+    # buffer commands → buffer N type ARG
+    m = re.match(r'^bufferspeciesname\((\w+),\s*(\w+)\)$', line)
+    if m:
+        slot = m.group(1).replace("STR_VAR_", "")
+        return f"buffer {slot} species {m.group(2)}"
+    m = re.match(r'^bufferitemname\((\w+),\s*(\w+)\)$', line)
+    if m:
+        slot = m.group(1).replace("STR_VAR_", "")
+        return f"buffer {slot} item {m.group(2)}"
+    m = re.match(r'^buffermovename\((\w+),\s*(\w+)\)$', line)
+    if m:
+        slot = m.group(1).replace("STR_VAR_", "")
+        return f"buffer {slot} move {m.group(2)}"
+    m = re.match(r'^buffernumberstring\((\w+),\s*(\w+)\)$', line)
+    if m:
+        slot = m.group(1).replace("STR_VAR_", "")
+        return f"buffer {slot} number {m.group(2)}"
+    m = re.match(r'^bufferleadmonspeciesname\((\w+)\)$', line)
+    if m:
+        slot = m.group(1).replace("STR_VAR_", "")
+        return f"buffer {slot} leadmon"
+    m = re.match(r'^bufferstring\((\w+),\s*(\w+)\)$', line)
+    if m:
+        slot = m.group(1).replace("STR_VAR_", "")
+        return f"buffer {slot} string {m.group(2)}"
+
+    # hideobjectat(OBJ, MAP) → hide actor MAP
+    m = re.match(r'^hideobjectat\((\w+),\s*(\w+)\)$', line)
+    if m:
+        actor = _resolve_actor_reverse(m.group(1), state)
+        return f"hide {actor} {m.group(2)}"
+
+    # showobjectat(OBJ, MAP) → show actor MAP
+    m = re.match(r'^showobjectat\((\w+),\s*(\w+)\)$', line)
+    if m:
+        actor = _resolve_actor_reverse(m.group(1), state)
+        return f"show {actor} {m.group(2)}"
+
+    # copyobjectxytoperm(OBJ) → setpos actor perm
+    m = re.match(r'^copyobjectxytoperm\((\w+)\)$', line)
+    if m:
+        actor = _resolve_actor_reverse(m.group(1), state)
+        return f"setpos {actor} perm"
+
+    # Standalone playfanfare(X) → fanfare X (without waitfanfare pair)
+    m = re.match(r'^playfanfare\((\w+)\)$', line)
+    if m:
+        return f"fanfare {m.group(1)}"
+
+    # pokemartdecoration(LIST) / pokemartdecoration2(LIST) → shop LIST decoration
+    m = re.match(r'^pokemartdecoration2?\((\w+)\)$', line)
+    if m:
+        return f"shop {m.group(1)} decoration"
+
+    # checkitemspace(ITEM) → check itemspace ITEM
+    m = re.match(r'^checkitemspace\((\w+)\)$', line)
+    if m:
+        return f"check itemspace {m.group(1)}"
+
+    # getplayerxy(VAR_X, VAR_Y) → getpos player VAR_X VAR_Y
+    m = re.match(r'^getplayerxy\((\w+),\s*(\w+)\)$', line)
+    if m:
+        return f"getpos player {m.group(1)} {m.group(2)}"
+
+    # showcontestpainting(WINNER_ID) → pory (niche, keep as-is)
+    # givedecoration(DECOR) → pory (niche)
+    # giveegg(SPECIES) → pory (niche)
+    # seteventmon(SPECIES, LEVEL) → pory (niche)
+
+    # goto_if_eq with parenthesized expressions (e.g. (NUM - 1))
+    m = re.match(r'^goto_if_eq\((\w+),\s*(.+),\s*(\w+)\)$', line)
+    if m:
+        var = m.group(1)
+        val = m.group(2).strip()
+        label = m.group(3)
+        return f"gotoif {var} == {val} {label}"
+
+    # setvar/setflag with inline @ comment
+    m = re.match(r'^setvar\((\w+),\s*(\w+)\s*@.*\)$', line)
+    if m:
+        return f"var {m.group(1)} {m.group(2)}"
+    m = re.match(r'^setflag\((\w+)\s*@.*\)$', line)
+    if m:
+        return f"flag set {m.group(1)}"
+
+    # fadeinbgm / fadeoutbgm → native
+    m = re.match(r'^fadeoutbgm\((\w+)\)$', line)
+    if m:
+        return f"pory fadeoutbgm({m.group(1)})"
+    m = re.match(r'^fadeinbgm\((\w+)\)$', line)
+    if m:
+        return f"pory fadeinbgm({m.group(1)})"
+
+    # dofieldeffectsparkle(X, Y, Z) → pory (niche visual)
+    m = re.match(r'^dofieldeffectsparkle\((.+)\)$', line)
+    if m:
+        return f"pory dofieldeffectsparkle({m.group(1)})"
+
     # Comments
     if line.startswith("//"):
         comment_text = line[2:].strip()
         return f"// {comment_text}"
+
+    # Generic known-command handler (pory passthrough with actor resolution)
+    m = re.match(r'^(\w+)\((.+)\)$', line)
+    if m:
+        cmd = m.group(1)
+        if cmd in _KNOWN_PORY_COMMANDS:
+            args = m.group(2)
+            positions = _ACTOR_ARG_POSITIONS.get(cmd)
+            resolved = _resolve_actors_in_args(args, state, positions)
+            return f"pory {cmd}({resolved})"
 
     return None
 
@@ -701,12 +1479,40 @@ def _decompile_body(body, state):
         if ts is not None:
             result.append(ts)
         else:
-            # Fallthrough — wrap as pory passthrough
-            result.append(f"pory {line}")
+            # Fallthrough — wrap as pory passthrough with actor resolution
+            m_fb = re.match(r'^(\w+)\((.+)\)$', line)
+            if m_fb:
+                resolved = _resolve_actors_in_args(m_fb.group(2), state)
+                result.append(f"pory {m_fb.group(1)}({resolved})")
+            else:
+                result.append(f"pory {line}")
 
         i += 1
 
     return result
+
+
+# ============================================================
+# PASS 3: CALL-SITE TRACKING
+# ============================================================
+
+def _track_call_sites(state):
+    """Scan decompiled scripts for goto/call targets to enable annotations."""
+    for caller_label, ts_lines in state.script_blocks_decompiled:
+        for line in ts_lines:
+            stripped = line.strip()
+            # Match goto/call/gotoif targets
+            for pattern in (
+                r'^goto\s+(\w+)',
+                r'^call\s+(\w+)',
+                r'^gotoif\s+.+\s+(\w+)$',
+            ):
+                m = re.match(pattern, stripped)
+                if m:
+                    target = m.group(1)
+                    if target not in state.call_targets:
+                        state.call_targets[target] = []
+                    state.call_targets[target].append(caller_label)
 
 
 # ============================================================
@@ -731,19 +1537,38 @@ def _assemble_output(state):
     if state.mapscripts_labels:
         parts.append("")
 
-    # 3. Script blocks (suppressing auto-labels)
+    # 3. Script blocks (suppressing auto-labels, annotating leaf scripts)
     for label, ts_lines in state.script_blocks_decompiled:
         if label in state.auto_labels:
             continue
-        parts.append(f"script {label}")
+        # Annotate leaf scripts (called from exactly one place, short body)
+        callers = state.call_targets.get(label, [])
+        annotation = ""
+        if len(callers) == 1:
+            # Extract a short caller name for readability
+            caller = callers[0]
+            # Strip common map prefix to keep annotation short
+            short_caller = caller
+            if state.map_name and caller.startswith(f"{state.map_name}_EventScript_"):
+                short_caller = caller[len(f"{state.map_name}_EventScript_"):]
+            elif caller.startswith(f"{state.map_name}_"):
+                short_caller = caller[len(f"{state.map_name}_"):]
+            body_lines = [l for l in ts_lines if l.strip()]
+            if len(body_lines) <= 4:
+                annotation = f"  // from {short_caller}"
+        parts.append(f"script {label}{annotation}")
         for line in ts_lines:
             parts.append(line)
         parts.append("")
 
-    # 4. Named text blocks
+    # 4. Named text blocks (suppressing those consumed by trainerbattle inlining)
+    emitted_text = False
     for label, content in state.text_blocks.items():
+        if label in state.auto_text_labels:
+            continue
         parts.append(f'text {label} "{content}"')
-    if state.text_blocks:
+        emitted_text = True
+    if emitted_text:
         parts.append("")
 
     # 5. Named movement blocks (suppressing auto-generated)
@@ -778,6 +1603,9 @@ def decompile(pory_text, map_name=""):
     for label, body in state.script_blocks_raw:
         ts_lines = _decompile_body(body, state)
         state.script_blocks_decompiled.append((label, ts_lines))
+
+    # Pass 3: Track call sites for annotation
+    _track_call_sites(state)
 
     # Assemble output
     output = _assemble_output(state)

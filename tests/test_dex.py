@@ -11,14 +11,18 @@ Covers:
   - Form label extraction (_form_label)
   - Name jump
 
-Tests run against the real game project at /home/deck/Documents/pokemon-seihoku/.
-If the game path is unavailable, all tests are skipped gracefully.
+Tests run against a real game project if TORCH_TEST_GAME_PATH is set,
+or ~/Documents/pokemon-seihoku exists. All tests are skipped gracefully
+if the game path is unavailable.
 """
 import os
 
 from torch.tests.harness import _begin_suite, _assert, _ok, _fail, _skip
 
-GAME_PATH = "/home/deck/Documents/pokemon-seihoku"
+GAME_PATH = os.environ.get(
+    "TORCH_TEST_GAME_PATH",
+    os.path.expanduser("~/Documents/pokemon-seihoku")
+)
 
 
 def run_suite():

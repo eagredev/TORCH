@@ -12,9 +12,12 @@ from torch.data import (
 
 
 class CompilerState:
-    def __init__(self, label_prefix, map_id=None):
+    def __init__(self, label_prefix, map_id=None, game_path=None,
+                 map_name=None):
         self.label_prefix = label_prefix
         self.map_id = map_id        # MAP_* constant from map.json "id" (for camera reset warp fallback)
+        self.game_path = game_path  # game project root (for self-flag allocation)
+        self.map_name = map_name    # map folder name (for self-flag naming)
         self.aliases = {}           # alias_name -> npc_number (int)
         self.pokemon_actors = {}    # name -> {"npc_id": int, "species": str}
         self.pokemon_hidden = set()        # Pokemon actors that have been hidden
@@ -37,6 +40,15 @@ class CompilerState:
         self.camera_offset_x = 0     # accumulated camera pan X tiles (+ = east)
         self.camera_offset_y = 0     # accumulated camera pan Y tiles (+ = south)
         self.needs_camera_patch = False  # whether compiled output uses ScriptResetCameraOffset
+        self.if_depth = 0            # nesting level for if/elif/else/endif blocks
+        self.switch_depth = 0        # nesting level for switch/case/endswitch blocks
+        self.choice_options = []     # option texts for current choice block
+        self.choice_prompt = ""      # prompt text for current choice block
+        # NPC Pages
+        self.current_page = None     # {"page_num": int, "label": str|None, "condition": str|None, "hide_targets": []}
+        self.page_groups = {}        # label_name -> [page_info_dict, ...]
+        self.page_lines = {}         # label_name -> {page_num: [emitted_lines]}
+        self.self_flag_names = {}    # cache: "suffix_key" -> "FLAG_SELF_..." name
 
     def error(self, msg):
         self.errors.append(f"Line {self.current_line_num}: {msg}")
@@ -47,10 +59,32 @@ class CompilerState:
 
     def emit(self, line):
         """Add a line inside the current script block."""
-        self.script_lines.append(line)
+        if self.current_page and self.current_page.get("label"):
+            label = self.current_page["label"]
+            pnum = self.current_page["page_num"]
+            self.page_lines.setdefault(label, {}).setdefault(pnum, []).append(line)
+        else:
+            self.script_lines.append(line)
 
     def emit_blank(self):
         self.script_lines.append("")
+
+    def resolve_self_flag(self, suffix):
+        """Resolve self.SUFFIX to a deterministic FLAG_SELF_... name."""
+        from torch.self_flags import make_self_flag_name
+        # Determine NPC context from current page label or current script
+        npc_label = ""
+        if self.current_page and self.current_page.get("label"):
+            npc_label = self.current_page["label"]
+        elif self.current_script:
+            npc_label = self.current_script
+        map_ref = self.map_name or self.label_prefix
+        key = f"{map_ref}_{npc_label}_{suffix}"
+        if key in self.self_flag_names:
+            return self.self_flag_names[key]
+        flag_name = make_self_flag_name(map_ref, npc_label, suffix)
+        self.self_flag_names[key] = flag_name
+        return flag_name
 
     def open_script(self, name):
         """Start a new script block."""
@@ -70,6 +104,27 @@ class CompilerState:
     def close_script(self):
         """Close the current script block and add it to output."""
         if self.current_script:
+            # Check for unclosed blocks and auto-close with error
+            target = self.script_lines
+            if self.current_page and self.current_page.get("label"):
+                label = self.current_page["label"]
+                pnum = self.current_page["page_num"]
+                target = self.page_lines.get(label, {}).get(pnum, self.script_lines)
+            if self.if_depth > 0:
+                self.error(f"Unclosed 'if' block ({self.if_depth} level(s) deep) at end of script '{self.current_script}'")
+                for _ in range(self.if_depth):
+                    target.append("}")
+                self.if_depth = 0
+            if self.switch_depth > 0:
+                self.error(f"Unclosed 'switch' block at end of script '{self.current_script}'")
+                for _ in range(self.switch_depth):
+                    target.append("}")
+                self.switch_depth = 0
+            # Pages: lines went to page_lines via emit redirect, skip output_blocks
+            if self.current_page:
+                self.current_script = None
+                self.script_lines = []
+                return
             lines = "\n".join(f"    {l}" if l else "" for l in self.script_lines)
             block = f"script {self.current_script} {{\n{lines}\n}}"
             self.output_blocks.append(block)
@@ -553,6 +608,112 @@ def _compile_mapscripts(tokens, stripped, state, lines, i):
     return 0
 
 
+def _compile_page(tokens, stripped, state, lines, i):
+    """Handle 'page N [if CONDITION]' — start an NPC page block."""
+    if len(tokens) < 2:
+        state.error("'page' requires a page number: page N [if CONDITION]")
+        return 0
+
+    try:
+        page_num = int(tokens[1])
+    except ValueError:
+        state.error(f"Page number must be an integer, got '{tokens[1]}'")
+        return 0
+
+    if page_num < 1:
+        state.error(f"Page number must be >= 1, got {page_num}")
+        return 0
+
+    # Parse optional condition: page N if CONDITION
+    condition = None
+    if len(tokens) >= 3 and tokens[2] == "if":
+        cond_expr, err = _parse_condition(tokens, start=3, state=state)
+        if err:
+            state.error(f"page {page_num}: {err}")
+            return 0
+        condition = cond_expr
+
+    # Validate: page 1 must not have a condition
+    if page_num == 1 and condition:
+        state.error("Page 1 must be the unconditional default (no 'if' clause)")
+        return 0
+
+    # Validate: page 2+ must have a condition
+    if page_num > 1 and not condition:
+        state.error(f"Page {page_num} requires a condition: page {page_num} if CONDITION")
+        return 0
+
+    # Close any open script from a previous page
+    if state.current_script:
+        state.close_script()
+
+    # Set up the new page
+    state.current_page = {
+        "page_num": page_num,
+        "label": None,       # filled in by label directive
+        "condition": condition,
+        "hide_targets": [],
+    }
+    return 0
+
+
+def _finalize_pages(state):
+    """Merge page blocks into single scripts with descending-priority conditionals."""
+    for label, pages in state.page_groups.items():
+        # Check for duplicate page numbers
+        seen_nums = set()
+        for pg in pages:
+            if pg["page_num"] in seen_nums:
+                state.error(f"Duplicate page {pg['page_num']} for script '{label}'")
+            seen_nums.add(pg["page_num"])
+
+        # Sort pages by page_num descending (highest priority first)
+        sorted_pages = sorted(pages, key=lambda p: p["page_num"], reverse=True)
+
+        body_lines = []
+        page_line_data = state.page_lines.get(label, {})
+
+        for pg in sorted_pages:
+            pnum = pg["page_num"]
+            condition = pg.get("condition")
+            hide_targets = pg.get("hide_targets", [])
+            page_body = page_line_data.get(pnum, [])
+
+            # Build page content
+            content = []
+            if hide_targets:
+                for target in hide_targets:
+                    # Resolve alias to LOCALID_
+                    if target in state.aliases:
+                        const_name = f"LOCALID_{target.upper()}"
+                    elif re.match(r"^npc\d+$", target):
+                        const_name = target.replace("npc", "")
+                    else:
+                        const_name = target
+                    content.append(f"removeobject({const_name})")
+                if not page_body:
+                    # Pure hide page — add releaseall + end
+                    content.append("releaseall")
+                    content.append("end")
+            content.extend(page_body)
+
+            if condition:
+                body_lines.append(f"// Page {pnum}")
+                body_lines.append(f"if ({condition}) {{")
+                for cl in content:
+                    body_lines.append(f"    {cl}")
+                body_lines.append("}")
+            else:
+                # Default page (page 1) — no wrapping if
+                body_lines.append(f"// Page {pnum} (default)")
+                body_lines.extend(content)
+
+        # Assemble the script block
+        inner = "\n".join(f"    {l}" if l else "" for l in body_lines)
+        block = f"script {label} {{\n{inner}\n}}"
+        state.output_blocks.append(block)
+
+
 def _compile_script_directive(tokens, stripped, state, lines, i):
     """Handle 'script Name' — start a new script block."""
     if len(tokens) < 2:
@@ -568,6 +729,13 @@ def _compile_label_directive(tokens, stripped, state, lines, i):
         state.error("'label' needs a name")
         return 0
     label_name = tokens[1].rstrip(":")
+    # Inside a page block: record the label on the page and set up line collection
+    if state.current_page:
+        state.current_page["label"] = label_name
+        state.page_lines.setdefault(label_name, {}).setdefault(
+            state.current_page["page_num"], [])
+        # Register page in page_groups
+        state.page_groups.setdefault(label_name, []).append(state.current_page)
     state.open_script(label_name)
     return 0
 
@@ -741,11 +909,20 @@ def _compile_fanfare(tokens, stripped, state, lines, i):
     return 0
 
 
+_CRY_MODES = {
+    "encounter": "CRY_MODE_ENCOUNTER",
+    "faint": "CRY_MODE_FAINT",
+}
+
 def _compile_cry(tokens, stripped, state, lines, i):
     if len(tokens) < 2:
         state.error("'cry' needs a species constant")
         return 0
-    state.emit(f"playmoncry({tokens[1]}, CRY_MODE_NORMAL)")
+    species = tokens[1]
+    if len(tokens) >= 3 and tokens[2] in _CRY_MODES:
+        state.emit(f"playmoncry({species}, {_CRY_MODES[tokens[2]]})")
+    else:
+        state.emit(f"playmoncry({species}, CRY_MODE_NORMAL)")
     return 0
 
 
@@ -769,6 +946,13 @@ def _compile_flag(tokens, stripped, state, lines, i):
         return 0
     action = tokens[1]
     flag_name = tokens[2]
+    # Resolve self-flags: flag set self.talked → setflag(FLAG_SELF_...)
+    if flag_name.startswith("self."):
+        suffix = flag_name[5:]
+        if not suffix:
+            state.error("'self.' requires a flag name (e.g. self.talked)")
+            return 0
+        flag_name = state.resolve_self_flag(suffix)
     if action == "set":
         state.emit(f"setflag({flag_name})")
     elif action == "clear":
@@ -782,7 +966,16 @@ def _compile_var(tokens, stripped, state, lines, i):
     if len(tokens) < 3:
         state.error("Usage: var VAR_NAME value")
         return 0
-    state.emit(f"setvar({tokens[1]}, {tokens[2]})")
+    var_name = tokens[1]
+    op = tokens[2]
+    if op == '=' and len(tokens) >= 4:
+        state.emit(f"copyvar({var_name}, {tokens[3]})")
+    elif op == '+' and len(tokens) >= 4:
+        state.emit(f"addvar({var_name}, {tokens[3]})")
+    elif op == '-' and len(tokens) >= 4:
+        state.emit(f"subvar({var_name}, {tokens[3]})")
+    else:
+        state.emit(f"setvar({var_name}, {op})")
     return 0
 
 
@@ -793,6 +986,10 @@ def _compile_hide(tokens, stripped, state, lines, i):
         return 0
     actor_name = tokens[1]
     actor_ref = resolve_actor(actor_name, state)
+    # hide actor MAP_NAME → hideobjectat(actor, MAP)
+    if len(tokens) >= 3 and tokens[2].startswith("MAP_"):
+        state.emit(f"hideobjectat({actor_ref}, {tokens[2]})")
+        return 0
     # Clear held movement before hiding Pokemon actors
     if actor_name in state.pokemon_actors:
         state.emit(f"waitmovement({actor_ref})")
@@ -808,6 +1005,10 @@ def _compile_show(tokens, stripped, state, lines, i):
         return 0
     actor_name = tokens[1]
     actor_ref = resolve_actor(actor_name, state)
+    # show actor MAP_NAME → showobjectat(actor, MAP)
+    if len(tokens) >= 3 and tokens[2].startswith("MAP_"):
+        state.emit(f"showobjectat({actor_ref}, {tokens[2]})")
+        return 0
     state.emit(f"addobject({actor_ref})")
     # Unfreeze shown Pokemon actors so their autonomous movement resumes
     if actor_name in state.pokemon_actors:
@@ -848,10 +1049,16 @@ def _compile_revive(tokens, stripped, state, lines, i):
 
 
 def _compile_setpos(tokens, stripped, state, lines, i):
-    if len(tokens) < 4:
-        state.error("Usage: setpos actor x y")
+    if len(tokens) < 3:
+        state.error("Usage: setpos actor x y | setpos actor perm")
         return 0
     actor_ref = resolve_actor(tokens[1], state)
+    if tokens[2] == "perm":
+        state.emit(f"copyobjectxytoperm({actor_ref})")
+        return 0
+    if len(tokens) < 4:
+        state.error("Usage: setpos actor x y | setpos actor perm")
+        return 0
     state.emit(f"setobjectxy({actor_ref}, {tokens[2]}, {tokens[3]})")
     return 0
 
@@ -977,7 +1184,11 @@ def _compile_special(tokens, stripped, state, lines, i):
     if len(tokens) < 2:
         state.error("'special' needs a function name")
         return 0
-    state.emit(f"special({tokens[1]})")
+    if len(tokens) >= 3:
+        # special Func VAR → specialvar(VAR, Func)
+        state.emit(f"specialvar({tokens[2]}, {tokens[1]})")
+    else:
+        state.emit(f"special({tokens[1]})")
     return 0
 
 
@@ -993,6 +1204,312 @@ def _compile_gotoif(tokens, stripped, state, lines, i):
     state.emit(f"if (flag({tokens[1]})) {{")
     state.emit(f"    goto({tokens[2]})")
     state.emit("}")
+    return 0
+
+
+# ============================================================
+# CONDITION PARSER — shared by if/elif/gotoif
+# ============================================================
+
+_COMPARISON_OPS = {"==", "!=", ">", "<", ">=", "<="}
+
+
+def _parse_condition(tokens, start=0, state=None):
+    """Parse a TorScript condition into a Poryscript expression.
+
+    Supported forms:
+      FLAG_X               -> flag(FLAG_X)
+      not FLAG_X           -> !flag(FLAG_X)
+      VAR_X op value       -> var(VAR_X) op value
+      not VAR_X op value   -> !(var(VAR_X) op value)
+      defeated TRAINER_X   -> defeated(TRAINER_X)
+      self.NAME            -> flag(FLAG_SELF_...)
+      A and B              -> A && B
+      A or B               -> A || B
+
+    Returns (pory_condition_string, error_or_None).
+    """
+    parts = list(tokens[start:])
+    if not parts:
+        return None, "Empty condition"
+
+    # Split on 'and' / 'or' for compound conditions
+    # Find the top-level logic operator (not inside sub-conditions)
+    logic_op = None
+    split_idx = None
+    for idx, tok in enumerate(parts):
+        if tok in ("and", "or") and idx > 0:
+            logic_op = tok
+            split_idx = idx
+            break
+
+    if logic_op:
+        left_tokens = parts[:split_idx]
+        right_tokens = parts[split_idx + 1:]
+        left_expr, left_err = _parse_single_condition(left_tokens, state=state)
+        if left_err:
+            return None, left_err
+        right_expr, right_err = _parse_condition(right_tokens, state=state)
+        if right_err:
+            return None, right_err
+        joiner = "&&" if logic_op == "and" else "||"
+        return f"{left_expr} {joiner} {right_expr}", None
+
+    return _parse_single_condition(parts, state=state)
+
+
+def _parse_single_condition(parts, state=None):
+    """Parse a single (non-compound) condition.
+
+    Returns (pory_expr, error_or_None).
+    """
+    if not parts:
+        return None, "Empty condition"
+
+    negated = False
+    if parts[0] == "not":
+        negated = True
+        parts = parts[1:]
+        if not parts:
+            return None, "'not' requires a flag or variable"
+
+    # self.NAME — per-NPC self-flag
+    if parts[0].startswith("self."):
+        suffix = parts[0][5:]
+        if not suffix:
+            return None, "'self.' requires a flag name (e.g. self.talked)"
+        if not state:
+            return None, "self-flags require a compiler context"
+        flag_name = state.resolve_self_flag(suffix)
+        expr = f"flag({flag_name})"
+        if negated:
+            expr = f"!{expr}"
+        return expr, None
+
+    # defeated TRAINER_X
+    if parts[0] == "defeated":
+        if len(parts) < 2:
+            return None, "'defeated' requires a trainer ID"
+        expr = f"defeated({parts[1]})"
+        if negated:
+            expr = f"!{expr}"
+        return expr, None
+
+    name = parts[0]
+
+    # VAR_X op value
+    if name.startswith("VAR_") and len(parts) >= 3 and parts[1] in _COMPARISON_OPS:
+        op = parts[1]
+        value = parts[2]
+        expr = f"var({name}) {op} {value}"
+        if negated:
+            expr = f"!({expr})"
+        return expr, None
+
+    # FLAG_X (boolean)
+    if name.startswith("FLAG_"):
+        expr = f"flag({name})"
+        if negated:
+            expr = f"!{expr}"
+        return expr, None
+
+    # Bare VAR_X without operator — treat as != 0 (truthiness)
+    if name.startswith("VAR_"):
+        expr = f"var({name})"
+        if negated:
+            expr = f"!{expr}"
+        return expr, None
+
+    return None, f"Cannot parse condition: '{' '.join(parts)}'"
+
+
+# ============================================================
+# IF / ELIF / ELSE / ENDIF
+# ============================================================
+
+def _compile_if(tokens, stripped, state, lines, i):
+    cond_expr, err = _parse_condition(tokens, start=1, state=state)
+    if err:
+        state.error(f"if: {err}")
+        return 0
+    state.emit(f"if ({cond_expr}) {{")
+    state.if_depth += 1
+    return 0
+
+
+def _compile_elif(tokens, stripped, state, lines, i):
+    if state.if_depth <= 0:
+        state.error("'elif' without matching 'if'")
+        return 0
+    cond_expr, err = _parse_condition(tokens, start=1, state=state)
+    if err:
+        state.error(f"elif: {err}")
+        return 0
+    state.emit(f"}} elif ({cond_expr}) {{")
+    return 0
+
+
+def _compile_else(tokens, stripped, state, lines, i):
+    if state.if_depth <= 0:
+        state.error("'else' without matching 'if'")
+        return 0
+    state.emit("} else {")
+    return 0
+
+
+def _compile_endif(tokens, stripped, state, lines, i):
+    if state.if_depth <= 0:
+        state.error("'endif' without matching 'if'")
+        return 0
+    state.emit("}")
+    state.if_depth -= 1
+    return 0
+
+
+# ============================================================
+# SWITCH / CASE / ENDSWITCH
+# ============================================================
+
+def _compile_switch(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("Usage: switch VAR_NAME")
+        return 0
+    var_name = tokens[1]
+    if not var_name.startswith("VAR_"):
+        state.error(f"switch requires a VAR_* name, got '{var_name}'")
+        return 0
+    state.emit(f"switch (var({var_name})) {{")
+    state.switch_depth += 1
+    return 0
+
+
+def _compile_case(tokens, stripped, state, lines, i):
+    if state.switch_depth <= 0:
+        state.error("'case' without matching 'switch'")
+        return 0
+    if len(tokens) < 2:
+        state.error("Usage: case value")
+        return 0
+    state.emit(f"    case {tokens[1]}:")
+    return 0
+
+
+def _compile_default(tokens, stripped, state, lines, i):
+    if state.switch_depth <= 0:
+        state.error("'default' without matching 'switch'")
+        return 0
+    state.emit("    default:")
+    return 0
+
+
+def _compile_endswitch(tokens, stripped, state, lines, i):
+    if state.switch_depth <= 0:
+        state.error("'endswitch' without matching 'switch'")
+        return 0
+    state.emit("}")
+    state.switch_depth -= 1
+    return 0
+
+
+# ============================================================
+# CHOICE / OPTION / ENDCHOICE
+# ============================================================
+
+def _compile_choice(tokens, stripped, state, lines, i):
+    # Extract prompt text (everything after "choice")
+    prompt = stripped[7:].strip().strip('"').rstrip('"')
+    if not prompt:
+        state.error("Usage: choice \"prompt text\"")
+        return 0
+    # Ensure $ terminator
+    if not prompt.endswith("$"):
+        prompt += "$"
+    state.choice_prompt = prompt
+    state.choice_options = []
+    return 0
+
+
+def _compile_option(tokens, stripped, state, lines, i):
+    if not state.choice_prompt:
+        state.error("'option' without matching 'choice'")
+        return 0
+    # Extract option text
+    opt_text = stripped[7:].strip().strip('"').rstrip('"')
+    if not opt_text:
+        state.error("Usage: option \"option text\"")
+        return 0
+    state.choice_options.append(opt_text)
+    return 0
+
+
+def _compile_endchoice(tokens, stripped, state, lines, i):
+    if not state.choice_prompt:
+        state.error("'endchoice' without matching 'choice'")
+        return 0
+
+    opts = state.choice_options
+    prompt = state.choice_prompt
+
+    if len(opts) < 2:
+        state.error("choice requires at least 2 options")
+        state.choice_prompt = ""
+        state.choice_options = []
+        return 0
+
+    if len(opts) == 2:
+        # Use MSGBOX_YESNO — works on all versions
+        state.emit(f'msgbox("{prompt}", MSGBOX_YESNO)')
+        state.emit("if (var(VAR_RESULT) == YES) {")
+        # First option = YES branch, will be filled by content between
+        # For now, emit a comment showing which option this is
+        state.emit(f'    // Option: {opts[0]}')
+        state.emit("} else {")
+        state.emit(f'    // Option: {opts[1]}')
+        state.emit("}")
+    else:
+        # Use dynmultichoice (expansion v1.9.0+)
+        # Build the option string: dynmultichoice(x, y, ignoreBPress, maxPerRow, "opt1", "opt2", ...)
+        opt_args = ", ".join(f'"{o}"' for o in opts)
+        state.emit(f'msgbox("{prompt}", MSGBOX_DEFAULT)')
+        state.emit(f"dynmultichoice(0, 0, TRUE, 2, {opt_args})")
+        state.emit("switch (var(VAR_RESULT)) {")
+        for idx, opt in enumerate(opts):
+            state.emit(f"    case {idx}:")
+            state.emit(f"        // Option: {opt}")
+        state.emit("}")
+
+    state.choice_prompt = ""
+    state.choice_options = []
+    return 0
+
+
+# ============================================================
+# CHECK (item, partysize, money, badge)
+# ============================================================
+
+_CHECK_COMMANDS = {
+    "item": lambda arg: f"checkitem({arg})",
+    "itemspace": lambda arg: f"checkitemspace({arg})",
+    "partysize": lambda arg: "getpartysize",
+    "money": lambda arg: f"checkmoney({arg})",
+    "badge": lambda arg: f"checkbadge({arg})",
+    "gender": lambda arg: "checkplayergender",
+}
+
+
+def _compile_check(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("Usage: check item|itemspace|partysize|money|badge|gender [argument]")
+        return 0
+    check_type = tokens[1]
+    if check_type not in _CHECK_COMMANDS:
+        state.error(f"Unknown check type '{check_type}'. Use: item, itemspace, partysize, money, badge, gender")
+        return 0
+    arg = tokens[2] if len(tokens) >= 3 else ""
+    if check_type not in ("partysize", "gender") and not arg:
+        state.error(f"'check {check_type}' requires an argument")
+        return 0
+    state.emit(_CHECK_COMMANDS[check_type](arg))
     return 0
 
 
@@ -1176,6 +1693,262 @@ def _compile_pory(tokens, stripped, state, lines, i):
 
 
 # ============================================================
+# WAIT / SYNC COMMANDS
+# ============================================================
+
+def _compile_waitmessage(tokens, stripped, state, lines, i):
+    state.emit("waitmessage")
+    return 0
+
+def _compile_waitbutton(tokens, stripped, state, lines, i):
+    state.emit("waitbuttonpress")
+    return 0
+
+def _compile_waitse(tokens, stripped, state, lines, i):
+    state.emit("waitse")
+    return 0
+
+def _compile_waitmoncry(tokens, stripped, state, lines, i):
+    state.emit("waitmoncry")
+    return 0
+
+def _compile_waitfanfare(tokens, stripped, state, lines, i):
+    state.emit("waitfanfare")
+    return 0
+
+def _compile_getpos(tokens, stripped, state, lines, i):
+    if len(tokens) < 4:
+        state.error("Usage: getpos player|actor VAR_X VAR_Y")
+        return 0
+    target = tokens[1]
+    var_x = tokens[2]
+    var_y = tokens[3]
+    if target == "player":
+        state.emit(f"getplayerxy({var_x}, {var_y})")
+    else:
+        actor_ref = resolve_actor(target, state)
+        state.emit(f"getobjectxy({actor_ref}, {var_x}, {var_y})")
+    return 0
+
+
+# ============================================================
+# MESSAGE (raw, no box type)
+# ============================================================
+
+def _compile_message(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'message' needs a text label")
+        return 0
+    state.emit(f"message({tokens[1]})")
+    return 0
+
+
+# ============================================================
+# WILDBATTLE
+# ============================================================
+
+def _compile_wildbattle(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("Usage: wildbattle SPECIES LEVEL or wildbattle start")
+        return 0
+    if tokens[1] == "start":
+        state.emit("dowildbattle")
+    elif len(tokens) >= 3:
+        species = tokens[1]
+        level = tokens[2]
+        if len(tokens) >= 4:
+            item = tokens[3]
+            state.emit(f"setwildbattle({species}, {level}, {item})")
+        else:
+            state.emit(f"setwildbattle({species}, {level})")
+    else:
+        state.error("Usage: wildbattle SPECIES LEVEL [ITEM] or wildbattle start")
+    return 0
+
+
+# ============================================================
+# TAKE (removeitem)
+# ============================================================
+
+def _compile_take(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'take' requires an item name (e.g. take ITEM_POTION)")
+        return 0
+    item = tokens[1]
+    qty = tokens[2] if len(tokens) >= 3 else "1"
+    if qty != "1":
+        state.emit(f"removeitem({item}, {qty})")
+    else:
+        state.emit(f"removeitem({item})")
+    return 0
+
+
+# ============================================================
+# RANDOM
+# ============================================================
+
+def _compile_random(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'random' needs a max value (e.g. random 5)")
+        return 0
+    state.emit(f"random({tokens[1]})")
+    return 0
+
+
+# ============================================================
+# SHOP (pokemart)
+# ============================================================
+
+def _compile_shop(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'shop' needs a mart list label")
+        return 0
+    label = tokens[1]
+    if len(tokens) >= 3 and tokens[2] == "decoration":
+        state.emit(f"pokemartdecoration({label})")
+    else:
+        state.emit(f"pokemart({label})")
+    return 0
+
+
+# ============================================================
+# BRAILLE
+# ============================================================
+
+def _compile_braille(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'braille' needs a text label")
+        return 0
+    state.emit(f"braillemsgbox({tokens[1]})")
+    return 0
+
+
+# ============================================================
+# SHOWMON / HIDEMON
+# ============================================================
+
+def _compile_showmon(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'showmon' needs a species constant")
+        return 0
+    species = tokens[1]
+    x = tokens[2] if len(tokens) >= 3 else "10"
+    y = tokens[3] if len(tokens) >= 4 else "3"
+    state.emit(f"showmonpic({species}, {x}, {y})")
+    return 0
+
+def _compile_hidemon(tokens, stripped, state, lines, i):
+    state.emit("hidemonpic")
+    return 0
+
+
+# ============================================================
+# SHOWMONEY / SHOWCOINS
+# ============================================================
+
+def _compile_showmoney(tokens, stripped, state, lines, i):
+    x = tokens[1] if len(tokens) >= 2 else "0"
+    y = tokens[2] if len(tokens) >= 3 else "0"
+    state.emit(f"showmoneybox({x}, {y})")
+    return 0
+
+def _compile_showcoins(tokens, stripped, state, lines, i):
+    x = tokens[1] if len(tokens) >= 2 else "0"
+    y = tokens[2] if len(tokens) >= 3 else "0"
+    state.emit(f"showcoinsbox({x}, {y})")
+    return 0
+
+
+# ============================================================
+# BUFFER
+# ============================================================
+
+_BUFFER_COMMANDS = {
+    "species": lambda slot, arg: f"bufferspeciesname({slot}, {arg})",
+    "item": lambda slot, arg: f"bufferitemname({slot}, {arg})",
+    "move": lambda slot, arg: f"buffermovename({slot}, {arg})",
+    "number": lambda slot, arg: f"buffernumberstring({slot}, {arg})",
+    "leadmon": lambda slot, arg: f"bufferleadmonspeciesname({slot})",
+    "string": lambda slot, arg: f"bufferstring({slot}, {arg})",
+}
+
+def _compile_buffer(tokens, stripped, state, lines, i):
+    if len(tokens) < 3:
+        state.error("Usage: buffer N species|item|move|number|leadmon|string ARG")
+        return 0
+    slot_num = tokens[1]
+    slot = f"STR_VAR_{slot_num}" if slot_num.isdigit() else slot_num
+    buf_type = tokens[2]
+    if buf_type not in _BUFFER_COMMANDS:
+        state.error(f"Unknown buffer type '{buf_type}'. Use: species, item, move, number, leadmon, string")
+        return 0
+    arg = tokens[3] if len(tokens) >= 4 else ""
+    if buf_type != "leadmon" and not arg:
+        state.error(f"'buffer {slot_num} {buf_type}' requires an argument")
+        return 0
+    state.emit(_BUFFER_COMMANDS[buf_type](slot, arg))
+    return 0
+
+
+# ============================================================
+# TILE (setmetatile)
+# ============================================================
+
+def _compile_tile(tokens, stripped, state, lines, i):
+    if len(tokens) < 5:
+        state.error("Usage: tile X Y METATILE_ID COLLISION")
+        return 0
+    state.emit(f"setmetatile({tokens[1]}, {tokens[2]}, {tokens[3]}, {tokens[4]})")
+    return 0
+
+
+# ============================================================
+# DOOR (opendoor/closedoor/waitdooranim)
+# ============================================================
+
+def _compile_door(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("Usage: door open|close|wait [X Y]")
+        return 0
+    action = tokens[1]
+    if action == "wait":
+        state.emit("waitdooranim")
+    elif action in ("open", "close"):
+        if len(tokens) < 4:
+            state.error(f"'door {action}' needs X Y coordinates")
+            return 0
+        cmd = "opendoor" if action == "open" else "closedoor"
+        state.emit(f"{cmd}({tokens[2]}, {tokens[3]})")
+    else:
+        state.error(f"Unknown door action '{action}'. Use: open, close, wait")
+    return 0
+
+
+# ============================================================
+# STAT (incrementgamestat)
+# ============================================================
+
+def _compile_stat(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'stat' needs a stat name")
+        return 0
+    state.emit(f"incrementgamestat({tokens[1]})")
+    return 0
+
+
+# ============================================================
+# SLOTS (playslotmachine)
+# ============================================================
+
+def _compile_slots(tokens, stripped, state, lines, i):
+    if len(tokens) < 2:
+        state.error("'slots' needs a machine ID variable")
+        return 0
+    state.emit(f"playslotmachine({tokens[1]})")
+    return 0
+
+
+# ============================================================
 # DISPATCH TABLES
 # ============================================================
 
@@ -1184,6 +1957,7 @@ _TOPLEVEL_HANDLERS = {
     "alias": _compile_alias,
     "pokemon": _compile_pokemon,
     "mapscripts": _compile_mapscripts,
+    "page": _compile_page,
     "script": _compile_script_directive,
     "label": _compile_label_directive,
     "text": _compile_text,
@@ -1222,6 +1996,18 @@ _INSCRIPT_HANDLERS = {
     "special": _compile_special,
     "waitstate": _compile_waitstate,
     "gotoif": _compile_gotoif,
+    "if": _compile_if,
+    "elif": _compile_elif,
+    "else": _compile_else,
+    "endif": _compile_endif,
+    "switch": _compile_switch,
+    "case": _compile_case,
+    "default": _compile_default,
+    "endswitch": _compile_endswitch,
+    "choice": _compile_choice,
+    "option": _compile_option,
+    "endchoice": _compile_endchoice,
+    "check": _compile_check,
     "trainerbattle_single": _compile_trainerbattle,
     "trainerbattle_double": _compile_trainerbattle,
     "trainerbattle_rematch": _compile_trainerbattle,
@@ -1233,6 +2019,27 @@ _INSCRIPT_HANDLERS = {
     "follower": _compile_follower,
     "multi": _compile_multi,
     "give": _compile_give,
+    "waitmessage": _compile_waitmessage,
+    "waitbutton": _compile_waitbutton,
+    "waitse": _compile_waitse,
+    "waitmoncry": _compile_waitmoncry,
+    "waitfanfare": _compile_waitfanfare,
+    "getpos": _compile_getpos,
+    "message": _compile_message,
+    "wildbattle": _compile_wildbattle,
+    "take": _compile_take,
+    "random": _compile_random,
+    "shop": _compile_shop,
+    "braille": _compile_braille,
+    "showmon": _compile_showmon,
+    "hidemon": _compile_hidemon,
+    "showmoney": _compile_showmoney,
+    "showcoins": _compile_showcoins,
+    "buffer": _compile_buffer,
+    "tile": _compile_tile,
+    "door": _compile_door,
+    "stat": _compile_stat,
+    "slots": _compile_slots,
 }
 
 
@@ -1260,9 +2067,11 @@ def _dispatch_inscript(cmd, tokens, stripped, state, lines, i):
     return 0
 
 
-def compile_script(input_path, label_prefix, emotes_conf, map_id=None):
+def compile_script(input_path, label_prefix, emotes_conf, map_id=None,
+                    game_path=None, map_name=None):
     """Main compilation function. Returns the generated .pory content."""
-    state = CompilerState(label_prefix, map_id=map_id)
+    state = CompilerState(label_prefix, map_id=map_id, game_path=game_path,
+                          map_name=map_name)
     state.emotes = load_emotes(emotes_conf)
 
     with open(input_path, "r") as f:
@@ -1286,6 +2095,15 @@ def compile_script(input_path, label_prefix, emotes_conf, map_id=None):
         tokens = stripped.split()
         cmd = tokens[0]
 
+        # Page-level hide: between 'page N' and 'label', captures hide targets
+        if state.current_page and not state.current_page.get("label") and cmd in ("hide", "remove"):
+            if len(tokens) >= 2:
+                state.current_page["hide_targets"].append(tokens[1])
+            else:
+                state.error(f"'{cmd}' needs an actor name")
+            i += 1
+            continue
+
         # Top-level directives
         if cmd in _TOPLEVEL_HANDLERS:
             consumed = _TOPLEVEL_HANDLERS[cmd](tokens, stripped, state, lines, i)
@@ -1305,6 +2123,25 @@ def compile_script(input_path, label_prefix, emotes_conf, map_id=None):
     # Close any open script block
     if state.current_script:
         state.close_script()
+
+    # Finalize NPC pages into merged script blocks
+    if state.page_groups:
+        _finalize_pages(state)
+
+    # Allocate self-flags in flags.h (only when game_path is available)
+    if state.self_flag_names and state.game_path:
+        from torch.self_flags import ensure_self_flag
+        for _key, flag_name in state.self_flag_names.items():
+            npc_label = ""
+            suffix = ""
+            # Extract NPC and suffix from the key: "map_label_suffix"
+            parts = _key.rsplit("_", 1)
+            if len(parts) == 2:
+                suffix = parts[1]
+                npc_label = parts[0]
+            ensure_self_flag(state.game_path, flag_name,
+                           map_name=state.map_name or "",
+                           npc_label=npc_label, suffix=suffix)
 
     return _assemble_output(state), state.errors
 

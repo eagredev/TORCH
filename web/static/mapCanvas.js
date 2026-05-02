@@ -112,6 +112,10 @@ let _showSigns = true;
 let _hiddenNpcIds = new Set();
 let _dimNonScriptEvents = false;
 
+// Worldstate simulator: NPC rendering overrides
+let _worldstateNpcs = null;  // Map<npc_id, {visible, activePage, changed, overrideGfx}> or null
+let _worldstateSpriteMap = {};  // OBJ_EVENT_GFX_* -> {url, width, height}
+
 // Mode
 let _mode = "view";           // "view", "events", or "scripts"
 let _contextMenu = null;      // currently open context menu element
@@ -134,6 +138,7 @@ let _boundClick = null;
 let _boundMouseLeave = null;
 let _stampUnsub = null;
 let _mapChangeStampUnsub = null;
+let _worldstateUnsub = null;
 
 // ---------------------------------------------------------------------------
 // Init / Cleanup
@@ -204,6 +209,33 @@ export function initMapCanvas(container) {
     }
   });
 
+  // Worldstate simulator — update NPC rendering when state changes
+  _worldstateUnsub = ideOn("ide:worldstate-changed", (d) => {
+    if (d.active && d.npcs) {
+      _worldstateNpcs = new Map();
+      for (const n of d.npcs) {
+        _worldstateNpcs.set(n.npc_id, n);
+      }
+      _worldstateSpriteMap = d.spriteUrlMap || {};
+      // Preload any override sprites
+      for (const [gfx, info] of Object.entries(_worldstateSpriteMap)) {
+        if (info.url && _spriteCache[info.url] === undefined) {
+          _spriteCache[info.url] = null;
+          const img = new Image();
+          img.onload = () => {
+            _spriteCache[info.url] = _processSheet(img, info.width || 16, info.height || 32);
+            _draw();
+          };
+          img.src = info.url;
+        }
+      }
+    } else {
+      _worldstateNpcs = null;
+      _worldstateSpriteMap = {};
+    }
+    _draw();
+  });
+
   // Stamp placement mode — listen for stamp-pending from stamp library
   _stampUnsub = ideOn("ide:stamp-pending", (d) => {
     _enterStampPlacement(d);
@@ -221,11 +253,15 @@ export function cleanupMapCanvas() {
   if (_eventUpdateUnsub) _eventUpdateUnsub();
   if (_stampUnsub) _stampUnsub();
   if (_mapChangeStampUnsub) _mapChangeStampUnsub();
+  if (_worldstateUnsub) _worldstateUnsub();
   _cancelStampPlacement();
   _mapUnsub = null;
   _modeUnsub = null;
   _stampUnsub = null;
   _mapChangeStampUnsub = null;
+  _worldstateUnsub = null;
+  _worldstateNpcs = null;
+  _worldstateSpriteMap = {};
 
   if (_resizeObserver) _resizeObserver.disconnect();
   _resizeObserver = null;
@@ -409,14 +445,17 @@ function _preloadSprites() {
  */
 function _processSheet(img, fw, fh) {
   const frames = {};
+  const maxFrames = Math.floor(img.width / fw) || 1;
   for (const [facing, frameIdx] of Object.entries(FACING_FRAME)) {
     const c = document.createElement("canvas");
     c.width = fw;
     c.height = fh;
     const ctx = c.getContext("2d");
 
-    const sx = frameIdx * fw;
-    const flipH = facing === "right";
+    // Clamp frame index to available frames (single-frame sprites like trucks)
+    const usableIdx = Math.min(frameIdx, maxFrames - 1);
+    const sx = usableIdx * fw;
+    const flipH = facing === "right" && maxFrames >= 3;
 
     if (flipH) {
       ctx.translate(fw, 0);
@@ -799,17 +838,137 @@ function _drawEvents() {
     const x = npc.x * METATILE_PX;
     const y = npc.y * METATILE_PX;
 
-    // Try to draw sprite from pre-processed facing frame
-    const spriteFrames = npc.sprite_sheet_url ? _spriteCache[npc.sprite_sheet_url] : null;
+    // Worldstate rendering: ghosted for hidden, badges for page changes
+    const wsNpc = _worldstateNpcs ? _worldstateNpcs.get(npc.object_id) : null;
+    const wsHidden = wsNpc && !wsNpc.visible;
+    const wsChanged = wsNpc && wsNpc.changed && wsNpc.visible;
+
+    // Position override from ON_TRANSITION simulation
+    let drawX = x;
+    let drawY = y;
+    let positionMoved = false;
+    if (wsNpc && wsNpc.overrideX != null && wsNpc.overrideY != null) {
+      drawX = wsNpc.overrideX * METATILE_PX;
+      drawY = wsNpc.overrideY * METATILE_PX;
+      positionMoved = (drawX !== x || drawY !== y);
+    }
+
+    // Draw ghost at original position if NPC moved
+    if (positionMoved && !wsHidden) {
+      _ctx.globalAlpha = (_dimNonScriptEvents ? 0.25 : 1.0) * 0.2;
+      const sprOrig = npc.sprite_sheet_url ? _spriteCache[npc.sprite_sheet_url] : null;
+      if (sprOrig) {
+        _drawNpcSprite(sprOrig, x, y, npc);
+      }
+      _ctx.globalAlpha = _dimNonScriptEvents ? 0.25 : 1.0;
+      // Dashed line from old position to new
+      _ctx.strokeStyle = "rgba(250, 204, 21, 0.5)";
+      _ctx.lineWidth = 1 / _zoom;
+      _ctx.setLineDash([3 / _zoom, 3 / _zoom]);
+      _ctx.beginPath();
+      _ctx.moveTo(x + METATILE_PX / 2, y + METATILE_PX / 2);
+      _ctx.lineTo(drawX + METATILE_PX / 2, drawY + METATILE_PX / 2);
+      _ctx.stroke();
+      _ctx.setLineDash([]);
+    }
+
+    // Use overridden position for all subsequent drawing
+    const rx = drawX;
+    const ry = drawY;
+
+    // Hidden NPCs: draw red X overlay instead of ghosting
+    if (wsHidden) {
+      _ctx.globalAlpha = (_dimNonScriptEvents ? 0.25 : 1.0) * 0.15;
+    }
+
+    // Changed NPCs: yellow background glow
+    if (wsChanged || positionMoved) {
+      _ctx.fillStyle = "rgba(250, 204, 21, 0.25)";
+      _ctx.fillRect(rx - 2, ry - 2, METATILE_PX + 4, METATILE_PX + 4);
+    }
+
+    // Try to draw sprite — check for worldstate sprite override first
+    let spriteFrames = npc.sprite_sheet_url ? _spriteCache[npc.sprite_sheet_url] : null;
+    if (wsNpc && wsNpc.overrideGfx && _worldstateSpriteMap[wsNpc.overrideGfx]) {
+      const overrideUrl = _worldstateSpriteMap[wsNpc.overrideGfx].url;
+      if (overrideUrl && _spriteCache[overrideUrl]) {
+        spriteFrames = _spriteCache[overrideUrl];
+      }
+    }
+
     if (spriteFrames) {
-      _drawNpcSprite(spriteFrames, x, y, npc);
+      _drawNpcSprite(spriteFrames, rx, ry, npc);
+    } else if (npc.is_var_sprite || (npc.graphics_id && npc.graphics_id.startsWith("OBJ_EVENT_GFX_VAR_"))) {
+      // Variable sprite placeholder — show a ? marker
+      _ctx.fillStyle = "rgba(147, 51, 234, 0.4)";
+      _ctx.fillRect(rx + 2, ry + 2, METATILE_PX - 4, METATILE_PX - 4);
+      _ctx.strokeStyle = "rgba(147, 51, 234, 0.8)";
+      _ctx.lineWidth = 1 / _zoom;
+      _ctx.strokeRect(rx + 2, ry + 2, METATILE_PX - 4, METATILE_PX - 4);
+      _ctx.fillStyle = "#c084fc";
+      _ctx.font = `bold ${Math.max(6, 10 / _zoom)}px monospace`;
+      _ctx.textAlign = "center";
+      _ctx.textBaseline = "middle";
+      _ctx.fillText("?", rx + METATILE_PX / 2, ry + METATILE_PX / 2);
     } else {
       // Fallback: colored dot
       const color = npc.is_trainer ? EVENT_COLORS.trainer : EVENT_COLORS.npc;
       _ctx.fillStyle = color;
       _ctx.beginPath();
-      _ctx.arc(x + METATILE_PX / 2, y + METATILE_PX / 2, 5, 0, Math.PI * 2);
+      _ctx.arc(rx + METATILE_PX / 2, ry + METATILE_PX / 2, 5, 0, Math.PI * 2);
       _ctx.fill();
+    }
+
+    // Restore alpha after ghosted NPC
+    if (wsHidden) {
+      _ctx.globalAlpha = _dimNonScriptEvents ? 0.25 : 1.0;
+
+      // Red X over hidden NPCs
+      const cx = rx + METATILE_PX / 2;
+      const cy = ry + METATILE_PX / 2;
+      const r = METATILE_PX * 0.35;
+      _ctx.strokeStyle = "rgba(231, 76, 60, 0.9)";
+      _ctx.lineWidth = Math.max(2, 3 / _zoom);
+      _ctx.beginPath();
+      _ctx.moveTo(cx - r, cy - r);
+      _ctx.lineTo(cx + r, cy + r);
+      _ctx.moveTo(cx + r, cy - r);
+      _ctx.lineTo(cx - r, cy + r);
+      _ctx.stroke();
+
+      // "hidden" label below
+      _ctx.fillStyle = "rgba(231, 76, 60, 0.9)";
+      _ctx.font = `bold ${Math.max(5, 7 / _zoom)}px monospace`;
+      _ctx.textAlign = "center";
+      _ctx.textBaseline = "top";
+      _ctx.fillText("HIDDEN", rx + METATILE_PX / 2, ry + METATILE_PX + 2);
+    }
+
+    // Worldstate: thick highlight ring + page badge for changed/moved NPCs
+    if (wsChanged || positionMoved) {
+      // Thick yellow border
+      _ctx.strokeStyle = "rgba(250, 204, 21, 0.9)";
+      _ctx.lineWidth = Math.max(2, 3 / _zoom);
+      _ctx.strokeRect(rx - 2, ry - 2, METATILE_PX + 4, METATILE_PX + 4);
+
+      // Page number badge (top-right corner)
+      if (wsNpc && wsNpc.activePage) {
+        const badgeR = Math.max(5, 7 / _zoom);
+        const bx = rx + METATILE_PX;
+        const by = ry;
+        _ctx.fillStyle = "rgba(74, 158, 255, 1.0)";
+        _ctx.beginPath();
+        _ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
+        _ctx.fill();
+        _ctx.strokeStyle = "#111";
+        _ctx.lineWidth = 1 / _zoom;
+        _ctx.stroke();
+        _ctx.fillStyle = "#fff";
+        _ctx.font = `bold ${Math.max(5, 8 / _zoom)}px monospace`;
+        _ctx.textAlign = "center";
+        _ctx.textBaseline = "middle";
+        _ctx.fillText(String(wsNpc.activePage), bx, by);
+      }
     }
 
     // Selection highlight
@@ -818,7 +977,7 @@ function _drawEvents() {
         _selectedEvent.data.object_id === npc.object_id) {
       _ctx.strokeStyle = "#fff";
       _ctx.lineWidth = 2 / _zoom;
-      _ctx.strokeRect(x - 1, y - 1, METATILE_PX + 2, METATILE_PX + 2);
+      _ctx.strokeRect(rx - 1, ry - 1, METATILE_PX + 2, METATILE_PX + 2);
     }
   }
 

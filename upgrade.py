@@ -1137,7 +1137,47 @@ def _reinject_makefile_vars(game_path, manifest):
         if _write_makefile_var(makefile, var, value):
             count += 1
 
+    # Validate that the all: target is still the first real target
+    if count > 0:
+        _validate_makefile_target_order(makefile)
+
     return count
+
+
+def _validate_makefile_target_order(makefile_path):
+    """Verify that `all:` is the first non-variable target in the Makefile.
+
+    If a custom target was placed above `all: rom`, `make` with no arguments
+    would silently build the wrong target.  This catches that.
+    """
+    import re
+    try:
+        with open(makefile_path, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return
+
+    # A target line looks like: name: [deps]  (not a variable assignment like VAR = ...)
+    # Skip: comments, blank lines, variable assignments (?=, :=, =), conditionals (ifeq, etc.)
+    target_pat = re.compile(r'^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:(?!=)')
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith(("ifeq", "ifneq", "ifdef", "ifndef", "else", "endif",
+                                "include", "define", "endef", "export", "unexport",
+                                "override", "vpath", ".PHONY", ".SECONDARY", ".PRECIOUS")):
+            continue
+        m = target_pat.match(stripped)
+        if m:
+            target_name = m.group(1)
+            if target_name == "all":
+                return  # all: is the first target — correct
+            # Found a non-all target before all:
+            print(f"  {GOLD}Warning:{RST} Makefile target '{target_name}' appears before 'all:'")
+            print(f"  {DIM}This means 'make' will build '{target_name}' instead of your ROM.{RST}")
+            print(f"  {DIM}Move '{target_name}:' below 'all: rom' in {makefile_path}{RST}")
+            return
 
 
 def _reinject_layouts(game_path, manifest):

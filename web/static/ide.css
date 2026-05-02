@@ -196,6 +196,7 @@ main:has(.ide-root) {
   border-right: none;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
   flex: 0 0 240px;
   width: 240px;
 }
@@ -217,7 +218,7 @@ main:has(.ide-root) {
   border: none;
   color: var(--text-dim, #888);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   padding: 0.2rem 0.3rem;
   line-height: 1;
   flex-shrink: 0;
@@ -227,6 +228,7 @@ main:has(.ide-root) {
 /* Collapsed left panel */
 .ide-left.collapsed {
   width: 24px !important;
+  max-width: 24px !important;
   flex: 0 0 24px !important;
   min-width: 0;
   overflow: hidden;
@@ -240,12 +242,21 @@ main:has(.ide-root) {
 .ide-left.collapsed .ide-map-search,
 .ide-left.collapsed .ide-left-tabs,
 .ide-left.collapsed .ide-beat-panel-host,
+.ide-left.collapsed .ide-data-host,
 .ide-left.collapsed .ide-project-host { display: none; }
 .ide-left.collapsed .ide-left-header {
   border: none;
-  padding: 0.2rem;
+  padding: 0.2rem 0;
+  width: 24px;
+  overflow: hidden;
 }
 .ide-left.collapsed .ide-left-header h3 { display: none; }
+.ide-left.collapsed .ide-left-tabs-row {
+  width: 24px;
+  overflow: hidden;
+  justify-content: center;
+}
+.ide-left.collapsed .ide-left-tabs { display: none; }
 
 .ide-map-search {
   width: 100%;
@@ -462,7 +473,7 @@ main:has(.ide-root) {
   border: none;
   color: var(--text-dim, #888);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   padding: 0.2rem 0.3rem;
   line-height: 1;
   flex-shrink: 0;
@@ -472,6 +483,7 @@ main:has(.ide-root) {
 /* Collapsed right panel */
 .ide-right.collapsed {
   width: 24px !important;
+  max-width: 24px !important;
   flex: 0 0 24px !important;
   min-width: 0;
   overflow: hidden;
@@ -480,7 +492,9 @@ main:has(.ide-root) {
 .ide-right.collapsed .ide-context-tabs { display: none; }
 .ide-right.collapsed .ide-right-header {
   border: none;
-  padding: 0.2rem;
+  padding: 0.2rem 0;
+  width: 24px;
+  overflow: hidden;
 }
 .ide-right.collapsed .ide-right-header h3 { display: none; }
 
@@ -895,8 +909,16 @@ main:has(.ide-root) {
 .ide-beat-panel-host {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow: hidden;
+}
+.ide-beat-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
 }
 .ide-beat-panel .beat-list-container {
   font-size: 0.75rem;
@@ -907,6 +929,83 @@ main:has(.ide-root) {
 }
 .ide-beat-panel .beat-search-bar {
   padding: 0.2rem 0.3rem;
+}
+
+/* Beat control bar (bottom of left panel) */
+.ide-beat-controls {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 0.3rem 0.35rem 0.25rem;
+  background: var(--bg-secondary, rgba(0,0,0,0.15));
+}
+.ide-beat-controls-row {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.ide-beat-btn {
+  padding: 2px 6px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-secondary, #aaa);
+  font-size: 0.65rem;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.ide-beat-btn:hover {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  border-color: var(--accent, #4a9eff);
+}
+.ide-beat-btn-paste:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ide-beat-btn-paste:not(:disabled) {
+  border-color: var(--accent, #4a9eff);
+  color: var(--accent, #4a9eff);
+}
+.ide-beat-btn-del:hover {
+  background: var(--status-error, #e74c3c);
+  border-color: var(--status-error, #e74c3c);
+  color: #fff;
+}
+.ide-beat-hints {
+  font-size: 0.55rem;
+  color: var(--text-dim, #666);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Add Beat menu (right panel, scripts mode) */
+.ide-add-beat-menu {
+  padding: 0.3rem 0;
+  overflow-y: auto;
+}
+.ide-add-cat {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #666);
+  padding: 0.4rem 0.5rem 0.15rem;
+}
+.ide-add-item {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--text-primary, #ddd);
+  cursor: pointer;
+  border-radius: 3px;
+  margin: 1px 0.3rem;
+  transition: background 0.12s;
+}
+.ide-add-item:hover {
+  background: var(--accent, #4a9eff);
+  color: #fff;
 }
 
 /* Project tab (left panel) */

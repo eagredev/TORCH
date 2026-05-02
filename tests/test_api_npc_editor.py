@@ -205,7 +205,7 @@ def run_suite():
 
     def test_is_editable():
         editable = {"flavor", "sign", "item_giver", "complex", "custom"}
-        not_editable = {"nurse", "pc", "shared", "inc", "unknown", "none"}
+        not_editable = {"nurse", "pc", "shared", "inc", "unknown"}
         ok = True
         detail = ""
         for t in editable:

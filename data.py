@@ -31,6 +31,51 @@ COMMON_FACE = {
     "right": "Common_Movement_FaceRight",
     "player": "Common_Movement_FacePlayer",
     "away": "Common_Movement_FaceAwayPlayer",
+    "original": "Common_Movement_FaceOriginalDirection",
+}
+
+# WalkInPlaceFaster = visually "turn to face" with a subtle animation.
+# Decompiler maps these to face commands for readability.
+COMMON_WALK_IN_PLACE_FASTER = {
+    "down": "Common_Movement_WalkInPlaceFasterDown",
+    "up": "Common_Movement_WalkInPlaceFasterUp",
+    "left": "Common_Movement_WalkInPlaceFasterLeft",
+    "right": "Common_Movement_WalkInPlaceFasterRight",
+}
+
+# Single-step Common_Movement walk labels
+COMMON_WALK = {
+    "up": "Common_Movement_WalkUp",
+    "down": "Common_Movement_WalkDown",
+    "left": "Common_Movement_WalkLeft",
+    "right": "Common_Movement_WalkRight",
+}
+
+COMMON_WALK_SLOW = {
+    "up": "Common_Movement_WalkUpSlow",
+    "down": "Common_Movement_WalkDownSlow",
+    "left": "Common_Movement_WalkLeftSlow",
+    "right": "Common_Movement_WalkRightSlow",
+}
+
+COMMON_WALK_FAST = {
+    "up": "Common_Movement_WalkUpFast",
+    "down": "Common_Movement_WalkDownFast",
+    "left": "Common_Movement_WalkLeftFast",
+    "right": "Common_Movement_WalkRightFast",
+}
+
+COMMON_WALK_FASTER = {
+    "up": "Common_Movement_WalkUpFaster",
+    "down": "Common_Movement_WalkDownFaster",
+    "left": "Common_Movement_WalkLeftFaster",
+    "right": "Common_Movement_WalkRightFaster",
+}
+
+# Multi-step delay sequences
+COMMON_DELAY = {
+    "Common_Movement_Delay32": 32,
+    "Common_Movement_Delay48": 48,
 }
 
 # Walk commands -> movement_command prefix

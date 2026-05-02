@@ -7,6 +7,7 @@ import {
   BEAT_CHANGED, FRAMES_UPDATED, DIRTY_CHANGED, TRIGGER_DISTANCE_CHANGED,
   CHAIN_CHANGED,
 } from "./state.js";
+import { getVisibleBeatCount } from "./beatList.js";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -431,7 +432,7 @@ function _onChainChanged() {
 
 function _updateCounter() {
   if (!_counterEl) return;
-  const total = state.frames ? state.frames.length : 0;
+  const total = getVisibleBeatCount();
   const current = total > 0 ? state.currentBeat + 1 : 0;
   _counterEl.textContent = `Beat ${current} / ${total}`;
 }

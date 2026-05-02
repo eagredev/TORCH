@@ -777,7 +777,8 @@ def _sync_repair_aliases(filepath, lines, label_to_objid):
 
 
 def _sync_compile_sources(source_dir, source_files, emotes_conf,
-                          quiet=False, map_id=None):
+                          quiet=False, map_id=None, game_path=None,
+                          map_name=None):
     """Phase 2b: Compile .txt and read .pory source files.
     Returns list of (region_name, content, had_errors)."""
     regions = []
@@ -801,7 +802,9 @@ def _sync_compile_sources(source_dir, source_files, emotes_conf,
             label_prefix = stem
             try:
                 content, errors = compile_script(filepath, label_prefix,
-                                                 emotes_conf, map_id=map_id)
+                                                 emotes_conf, map_id=map_id,
+                                                 game_path=game_path,
+                                                 map_name=map_name)
                 # Strip const lines -- auto-constants region provides them
                 lines = content.split("\n")
                 lines = [l for l in lines if not l.startswith("const ")]
@@ -1084,7 +1087,20 @@ def sync_map(map_name, project_dir, game_path, emotes_conf, source_display,
 
     When quiet=True, suppresses all print() output.
     When skip_snapshot=True, skips ZIP snapshot creation (faster for auto-sync).
+    Pristine and locked maps are skipped (not a failure).
     """
+    # State guard — only sync claimed maps
+    from torch.registry import get_map_state, STATE_PRISTINE, STATE_LOCKED
+    state = get_map_state(project_dir, map_name)
+    if state == STATE_PRISTINE:
+        if not quiet:
+            print(f"  {map_name}: pristine (read-only) — skipping sync")
+        return True
+    if state == STATE_LOCKED:
+        if not quiet:
+            print(f"  {map_name}: locked — skipping sync")
+        return True
+
     source_dir = os.path.join(project_dir, map_name)
     game_map_dir = os.path.join(game_path, "data", "maps", map_name)
     target_path = os.path.join(game_map_dir, "scripts.pory")
@@ -1141,7 +1157,9 @@ def sync_map(map_name, project_dir, game_path, emotes_conf, source_display,
             pass
 
     regions = _sync_compile_sources(source_dir, source_files, emotes_conf,
-                                    quiet=quiet, map_id=map_id)
+                                    quiet=quiet, map_id=map_id,
+                                    game_path=game_path,
+                                    map_name=map_name)
 
     # Auto-apply camera engine patch if any script uses ScriptResetCameraOffset
     _needs_patch = any("ScriptResetCameraOffset" in content
@@ -1223,7 +1241,10 @@ def ensure_synced(map_name, project_dir, game_path, emotes_conf,
     Never crashes, never blocks navigation.
     """
     try:
-        from torch.registry import get_map_health, is_enrolled, enroll_map
+        from torch.registry import (
+            get_map_health, is_enrolled, enroll_map,
+            get_map_state, STATE_PRISTINE, STATE_LOCKED,
+        )
         from torch.colours import DIM, RST, GOLD
 
         # Auto-enroll if workspace + game folder exist but not enrolled
@@ -1233,7 +1254,25 @@ def ensure_synced(map_name, project_dir, game_path, emotes_conf,
                 and not is_enrolled(project_dir, map_name)):
             enroll_map(project_dir, map_name)
 
+        # State guard — skip locked maps, re-decompile pristine_stale
+        state = get_map_state(project_dir, map_name)
+        if state == STATE_LOCKED:
+            return (False, [])
+
         health = get_map_health(project_dir, map_name, game_path)
+
+        if health == "pristine_stale":
+            try:
+                from torch.bulk_decompile import re_decompile_pristine
+                re_decompile_pristine(game_path, map_name, project_dir)
+                print(f"  {DIM}Re-decompiled {map_name} (pristine){RST}")
+                return (True, [])
+            except Exception:
+                return (False, [])
+
+        # Pristine maps that are "ok" need no action
+        if state == STATE_PRISTINE:
+            return (False, [])
 
         if health == "ok":
             return (False, [])
@@ -1279,6 +1318,7 @@ def sync_all(project_dir, game_path, emotes_conf, source_display, max_snapshots=
     from torch.registry import (
         load_registry, get_enrolled_maps, bulk_enroll,
         get_unenrolled_workspace_dirs, get_map_health,
+        get_maps_by_state, STATE_PRISTINE, STATE_CLAIMED, STATE_LOCKED,
     )
 
     if not os.path.isdir(project_dir):
@@ -1310,6 +1350,30 @@ def sync_all(project_dir, game_path, emotes_conf, source_display, max_snapshots=
         print(f"  No enrolled maps. Use 'torch enroll --all' to enroll workspace maps.")
         return False
 
+    # Partition by state — only sync claimed maps
+    by_state = get_maps_by_state(project_dir)
+    claimed = set(by_state.get(STATE_CLAIMED, []))
+    pristine_maps = by_state.get(STATE_PRISTINE, [])
+    locked_maps = by_state.get(STATE_LOCKED, [])
+
+    # Re-decompile pristine_stale maps
+    if pristine_maps:
+        from torch.bulk_decompile import re_decompile_pristine
+        stale_count = 0
+        for pm in pristine_maps:
+            h = get_map_health(project_dir, pm, game_path)
+            if h == "pristine_stale":
+                try:
+                    re_decompile_pristine(game_path, pm, project_dir)
+                    stale_count += 1
+                except Exception:
+                    pass
+        if stale_count:
+            print(f"  Re-decompiled {stale_count} pristine map(s)")
+
+    # Filter to claimed maps only
+    enrolled = [m for m in enrolled if m in claimed]
+
     # Warn about unenrolled workspace folders
     unenrolled = get_unenrolled_workspace_dirs(project_dir)
     if unenrolled:
@@ -1317,7 +1381,19 @@ def sync_all(project_dir, game_path, emotes_conf, source_display, max_snapshots=
         print(f"  (use 'torch enroll <name>' to include them)")
         print()
 
-    print(f"Writing {len(enrolled)} enrolled map(s)...")
+    if pristine_maps or locked_maps:
+        parts = []
+        if pristine_maps:
+            parts.append(f"{len(pristine_maps)} pristine (read-only)")
+        if locked_maps:
+            parts.append(f"{len(locked_maps)} locked")
+        print(f"  Skipping {', '.join(parts)}")
+
+    if not enrolled:
+        print(f"  No claimed maps to sync.")
+        return True
+
+    print(f"Writing {len(enrolled)} claimed map(s)...")
     print()
 
     written = []

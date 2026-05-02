@@ -52,6 +52,21 @@ export const BEAT_TAGS = {
   music: "MUS", fanfare: "FAN", cry: "CRY", text: "TXT",
   movement: "BLK", raw: "RAW", follower: "FOL", multi: "MLT",
   give: "GIV",
+  // Conditionals & structure
+  condition: "IF", endif: "EIF",
+  switch: "SWH", case: "CAS", endswitch: "ESW",
+  choice: "CHO", option: "OPT", endchoice: "ECH",
+  check: "CHK", page: "PAG",
+  // Wait/sync
+  waitmessage: "WMS", waitbutton: "WBT", waitse: "WSE",
+  waitmoncry: "WCR", waitfanfare: "WFN",
+  // Extended commands
+  message: "MSG", wildbattle: "WLD", take: "TAK",
+  random: "RND", shop: "SHP", braille: "BRL",
+  showmon: "SMN", hidemon: "HMN",
+  showmoney: "MON", showcoins: "COI",
+  buffer: "BUF", tile: "TIL", door: "DOR",
+  stat: "STA", slots: "SLT", getpos: "GPO",
 };
 
 // ---------------------------------------------------------------------------
@@ -343,6 +358,7 @@ export async function loadScene(mapName, scriptName) {
   if (!res.ok) return { ok: false, error: res.error };
 
   state.source = res.data.source || "";
+  state.fileMtime = res.data.file_mtime || 0;
   state.frames = res.data.frames || [];
   state.cast = res.data.cast || {};
   state.spriteIndex = res.data.sprite_index || {};
@@ -539,9 +555,26 @@ export async function listScripts(mapName) {
 
 export async function saveScript() {
   if (!state.mapName || !state.scriptName) return { ok: false, error: "No script loaded" };
-  const res = await postApi(`/scenes/${state.mapName}/${state.scriptName}/save`, { source: state.source });
+  const body = { source: state.source };
+  if (state.fileMtime) body.file_mtime = state.fileMtime;
+  const res = await postApi(`/scenes/${state.mapName}/${state.scriptName}/save`, body);
+  if (!res.ok && res.error && res.error.includes("modified externally")) {
+    // File changed on disk — prompt user to reload
+    const reload = confirm(
+      "This file was modified externally since you opened it.\n\n" +
+      "Reload to get the latest version? (Your unsaved changes will be lost.)"
+    );
+    if (reload) {
+      await loadScene(state.mapName, state.scriptName);
+    }
+    return res;
+  }
   if (res.ok) {
     setDirty(false);
+    // Update mtime so subsequent saves don't trigger a false stale-conflict
+    if (res.data && res.data.file_mtime) {
+      state.fileMtime = res.data.file_mtime;
+    }
     // Post-save validation: check for warnings/errors in the saved source
     try {
       const valRes = await postApi(
@@ -575,6 +608,21 @@ export async function saveAndBuild() {
 // beatSummary — shared helper (ported from old visualizer.js)
 // ---------------------------------------------------------------------------
 
+/** Look up a movement block's commands by label from current frames. */
+function _lookupMovementCommands(label) {
+  const frames = state.frames || [];
+  for (const f of frames) {
+    const b = f.beat;
+    if (b && b.type === "movement" && (b.data || {}).label === label) {
+      const cmds = b.data.commands || [];
+      if (cmds.length === 0) return null;
+      const preview = cmds.join(", ");
+      return preview.length > 35 ? preview.slice(0, 35) + "..." : preview;
+    }
+  }
+  return null;
+}
+
 export function beatSummary(beat) {
   if (!beat) return "";
   const t = beat.type;
@@ -599,6 +647,14 @@ export function beatSummary(beat) {
         });
         const s = summaries.join(" + ");
         return s.length > 50 ? s.slice(0, 50) + "..." : s;
+      }
+      // For "do" commands, show actor + label + inline movement preview
+      if (d.verb === "do" && d.label) {
+        const cmds = _lookupMovementCommands(d.label);
+        if (cmds) {
+          return `${d.actor || ""} ${cmds}`;
+        }
+        return `${d.actor || ""} do ${d.label}`;
       }
       const parts = [d.actor, d.verb, d.direction, d.count].filter(Boolean);
       return parts.join(" ");
@@ -629,8 +685,13 @@ export function beatSummary(beat) {
     case "show":
       return d.actor || d.name || "";
     case "flow":
-    case "gotoif":
-      return d.label || d.condition || d.target || "";
+      return d.label || d.target || d.flow_type || "";
+    case "gotoif": {
+      const cond = d.condition || d.flag || "";
+      const target = d.label || d.target || "";
+      if (cond && target) return `${cond} \u2192 ${target}`;
+      return cond || target || "";
+    }
     case "lock":
     case "faceplayer":
     case "closemessage":
@@ -643,17 +704,85 @@ export function beatSummary(beat) {
       return `${d.intensity || ""} ${d.count || ""}`.trim();
     case "pory":
     case "raw":
-      return (d.content || d.text || "").slice(0, 40);
+      return (d.raw_line || d.content || d.text || "").slice(0, 40);
     case "comment":
       return (d.text || d.content || "").slice(0, 40);
-    case "movement":
-      return `${d.actor || ""} movement block`;
+    case "movement": {
+      const lbl = d.label || "";
+      const cmds = d.commands || [];
+      if (cmds.length > 0) {
+        const preview = cmds.slice(0, 3).join(", ");
+        const more = cmds.length > 3 ? ` (+${cmds.length - 3})` : "";
+        return `${lbl}: ${preview}${more}`;
+      }
+      return lbl || "movement block";
+    }
     case "follower":
       return d.action || "";
     case "multi":
       return d.format || "";
     case "give":
-      return `${d.item || ""} ${d.quantity || ""}`.trim();
+    case "take":
+      return `${d.item || ""} ${d.qty || d.quantity || ""}`.trim();
+    // Conditionals & structure
+    case "condition":
+      if (d.branch === "else") return "else";
+      return d.raw_condition || d.condition || "";
+    case "endif":
+      return "";
+    case "switch":
+      return d.var || d.variable || "";
+    case "case":
+      return d.value || "default";
+    case "endswitch":
+    case "endchoice":
+      return "";
+    case "choice":
+      return d.prompt ? `"${d.prompt.slice(0, 30)}"` : "";
+    case "option":
+      return d.text ? `"${d.text}"` : "";
+    case "check":
+      return `${d.check_type || ""} ${d.argument || ""}`.trim();
+    case "page":
+      return d.condition || d.page_num || "";
+    // Wait/sync
+    case "waitmessage":
+    case "waitbutton":
+    case "waitse":
+    case "waitmoncry":
+    case "waitfanfare":
+      return "";
+    // Extended commands
+    case "message":
+      return d.label || "";
+    case "wildbattle":
+      if (d.action === "start") return "start";
+      return `${d.species || ""} ${d.level || ""}`.trim();
+    case "random":
+      return d.max || "";
+    case "shop":
+      return `${d.label || ""} ${d.variant || ""}`.trim();
+    case "braille":
+      return d.label || "";
+    case "showmon":
+      return d.species || "";
+    case "hidemon":
+      return "";
+    case "showmoney":
+    case "showcoins":
+      return "";
+    case "buffer":
+      return `${d.slot || ""} ${d.buf_type || ""} ${d.arg || ""}`.trim();
+    case "tile":
+      return `${d.x || ""},${d.y || ""} ${d.metatile || ""}`.trim();
+    case "door":
+      return `${d.action || ""} ${d.x || ""} ${d.y || ""}`.trim();
+    case "stat":
+      return d.stat_name || "";
+    case "slots":
+      return d.machine_var || "";
+    case "getpos":
+      return `${d.target || ""} ${d.var_x || ""} ${d.var_y || ""}`.trim();
     default:
       return JSON.stringify(d).slice(0, 40);
   }

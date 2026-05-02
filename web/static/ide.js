@@ -16,6 +16,7 @@ import { initScriptsMode, cleanupScriptsMode } from "./scriptsMode.js";
 import { initDexWidget, cleanupDexWidget } from "./dexStatusWidget.js";
 import { initMusicWidget, cleanupMusicWidget } from "./musicStatusWidget.js";
 import { initCollisionOverlay, cleanupCollisionOverlay } from "./collisionOverlay.js";
+import { initWorldstatePanel, cleanupWorldstatePanel, injectWorldstateCSS } from "./worldstatePanel.js";
 
 // ---------------------------------------------------------------------------
 // IDE Event Bus (shared across panels)
@@ -161,6 +162,8 @@ export function render(container) {
   initScriptsMode();
   initMusicWidget(container);
   initDexWidget(container);
+  injectWorldstateCSS();
+  initWorldstatePanel(document.getElementById("ide-center"));
 
   // Wire resize handles
   _resizeCleanups.push(
@@ -288,6 +291,7 @@ export function cleanup() {
   cleanupScriptsMode();
   cleanupMusicWidget();
   cleanupDexWidget();
+  cleanupWorldstatePanel();
 
   if (_styleEl) {
     _styleEl.remove();

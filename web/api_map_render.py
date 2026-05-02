@@ -91,6 +91,84 @@ def _get_game_path(handler):
     return game_path, None
 
 
+# ---------------------------------------------------------------------------
+# Variable sprite resolution cache
+# ---------------------------------------------------------------------------
+
+_var_sprite_cache = {}  # (game_path, map_name) -> {gfx_var -> resolved_gfx}
+
+
+def _resolve_var_sprite(game_path, map_name, gfx_var):
+    """Resolve OBJ_EVENT_GFX_VAR_N to a concrete sprite constant.
+
+    Scans the map's ON_TRANSITION scripts for setvar commands that assign
+    VAR_OBJ_GFX_ID_* to a concrete OBJ_EVENT_GFX_* constant. Also follows
+    common setup functions like Common_EventScript_SetupRivalGfxId.
+
+    Returns the resolved OBJ_EVENT_GFX_* string or None.
+    """
+    import re
+
+    cache_key = (game_path, map_name)
+    if cache_key in _var_sprite_cache:
+        return _var_sprite_cache[cache_key].get(gfx_var)
+
+    resolved = {}
+
+    # Map OBJ_EVENT_GFX_VAR_N -> VAR_OBJ_GFX_ID_N
+    # VAR_0 -> VAR_OBJ_GFX_ID_0, etc.
+    var_num_map = {}
+    for n in range(4):  # pokeemerald supports VAR_OBJ_GFX_ID_0 through _3
+        var_num_map[f"OBJ_EVENT_GFX_VAR_{n}"] = f"VAR_OBJ_GFX_ID_{n}"
+
+    # Read script files
+    content = ""
+    for fname in ("scripts.pory", "scripts.inc"):
+        fpath = os.path.join(game_path, "data", "maps", map_name, fname)
+        if os.path.isfile(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content += f.read() + "\n"
+            except OSError:
+                pass
+
+    # Scan data/scripts/ for VAR_OBJ_GFX_ID setvar patterns
+    # (rival_graphics.inc, common scripts, etc.)
+    scripts_dir = os.path.join(game_path, "data", "scripts")
+    if os.path.isdir(scripts_dir):
+        for fname in os.listdir(scripts_dir):
+            if fname.endswith((".inc", ".pory")):
+                try:
+                    with open(os.path.join(scripts_dir, fname), "r",
+                              encoding="utf-8") as f:
+                        content += f.read() + "\n"
+                except OSError:
+                    pass
+
+    if not content:
+        _var_sprite_cache[cache_key] = resolved
+        return None
+
+    # Find setvar(VAR_OBJ_GFX_ID_N, OBJ_EVENT_GFX_*) patterns
+    # Assembly: setvar VAR_OBJ_GFX_ID_0, OBJ_EVENT_GFX_RIVAL_MAY
+    # Poryscript: setvar(VAR_OBJ_GFX_ID_0, OBJ_EVENT_GFX_RIVAL_MAY)
+    for m in re.finditer(
+        r'setvar\s*\(?\s*(VAR_OBJ_GFX_ID_\d)\s*,\s*(OBJ_EVENT_GFX_\w+)',
+        content
+    ):
+        var_name = m.group(1)
+        gfx_const = m.group(2)
+        # Find which OBJ_EVENT_GFX_VAR_N maps to this variable
+        for gfx_var_key, var_ref in var_num_map.items():
+            if var_ref == var_name:
+                # Take the first concrete assignment found (default behavior)
+                if gfx_var_key not in resolved:
+                    resolved[gfx_var_key] = gfx_const
+
+    _var_sprite_cache[cache_key] = resolved
+    return resolved.get(gfx_var)
+
+
 _map_id_cache = {}  # game_path -> (mtime, {MAP_CONSTANT -> folder_name})
 
 
@@ -1063,6 +1141,15 @@ def handle_map_events(handler, match, query_params):
 
         sprite_entry = sprite_index.get(gfx, {})
 
+        # Variable-based graphics: resolve from ON_TRANSITION setvar patterns
+        is_var_sprite = gfx.startswith("OBJ_EVENT_GFX_VAR_")
+        resolved_gfx = gfx
+        if is_var_sprite and not sprite_entry:
+            resolved = _resolve_var_sprite(game_path, map_name, gfx)
+            if resolved:
+                resolved_gfx = resolved
+                sprite_entry = sprite_index.get(resolved, {})
+
         # sprite_sheet_url: the raw spritesheet PNG (e.g. 144x32 for 9 frames)
         # frame_width/frame_height: single frame dimensions (e.g. 16x32)
         sprite_sheet_url = ""
@@ -1087,6 +1174,8 @@ def handle_map_events(handler, match, query_params):
             "sprite_sheet_url": sprite_sheet_url,
             "frame_width": sprite_entry.get("width", 16),
             "frame_height": sprite_entry.get("height", 32),
+            "is_var_sprite": is_var_sprite,
+            "resolved_gfx": resolved_gfx if is_var_sprite else "",
         })
 
     # Warp events

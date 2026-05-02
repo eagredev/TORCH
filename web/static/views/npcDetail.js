@@ -238,6 +238,23 @@ const STYLES = `
 .npcd-ref-link:hover { text-decoration: underline; }
 .npcd-ref-empty { color: var(--text-muted, #6c7086); font-size: 0.8rem; font-style: italic; }
 
+/* Pages */
+.npcd-page-item {
+  margin-bottom: 0.3rem; font-size: 0.8rem;
+}
+.npcd-page-num {
+  font-weight: 600; color: var(--text-primary, #cdd6f4);
+}
+.npcd-page-cond {
+  color: var(--accent, #89b4fa); font-size: 0.75rem;
+}
+.npcd-page-default {
+  color: var(--text-muted, #6c7086); font-size: 0.75rem; font-style: italic;
+}
+.npcd-page-hint {
+  color: var(--text-dim, #585b70); font-size: 0.72rem; margin-top: 0.4rem;
+}
+
 /* Delete modal */
 .npcd-modal-backdrop {
   position: fixed; inset: 0; z-index: 999;
@@ -383,6 +400,7 @@ export async function renderNpcDetail(container, mapName, npcId) {
       ${renderDialogueSection(npc)}
       ${renderPropertiesSection(npc, constants)}
       ${renderScriptInfoSection(npc, badgeStyle, st)}
+      ${renderPagesSection(npc)}
       ${renderReferencedBySection(npc)}
     </div>
   `;
@@ -878,6 +896,30 @@ function renderScriptInfoSection(npc, badgeStyle, scriptType) {
     </div>
     <div class="npcd-section-content" data-content="script-info" style="display:none">
       ${content}
+    </div>
+  </div>`;
+}
+
+function renderPagesSection(npc) {
+  const pages = npc.pages || [];
+  if (pages.length === 0) return "";
+
+  const items = pages.map(p => {
+    const cond = p.condition
+      ? `<span class="npcd-page-cond">if ${esc(p.condition)}</span>`
+      : `<span class="npcd-page-default">(default)</span>`;
+    return `<div class="npcd-page-item">
+      <span class="npcd-page-num">Page ${p.page_num}</span> ${cond}
+    </div>`;
+  }).join("");
+
+  return `<div class="npcd-section">
+    <div class="npcd-section-header">
+      <span class="npcd-section-title">Pages (${pages.length})</span>
+    </div>
+    <div class="npcd-section-content">
+      ${items}
+      <div class="npcd-page-hint">Edit pages in the Script Editor</div>
     </div>
   </div>`;
 }

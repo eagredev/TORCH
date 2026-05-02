@@ -1027,19 +1027,59 @@ def _cmd_sync(args, project_dir, game_path, emotes_conf, source_display,
                  settings["max_snapshots"])
 
 
-def _cmd_status(project_dir, game_path):
+def _cmd_status(project_dir, game_path, show_all=False):
     """Handle 'torch status'."""
     if not _HAS_REGISTRY:
         print("  Map Registry is not available in this release.")
         sys.exit(1)
     from torch.registry import (
         get_enrolled_maps, get_map_health, get_unenrolled_workspace_dirs,
-        load_registry,
+        load_registry, get_maps_by_state,
+        STATE_PRISTINE, STATE_CLAIMED, STATE_LOCKED,
     )
 
     enrolled = get_enrolled_maps(project_dir)
+    by_state = get_maps_by_state(project_dir)
+    n_pristine = len(by_state.get(STATE_PRISTINE, []))
+    n_claimed = len(by_state.get(STATE_CLAIMED, []))
+    n_locked = len(by_state.get(STATE_LOCKED, []))
+
     print()
     print(f"  {WHITE}Map Registry{RST}  --  {CYAN}{len(enrolled)} enrolled{RST}")
+    if n_pristine or n_locked:
+        parts = []
+        if n_claimed:
+            parts.append(f"{n_claimed} claimed")
+        if n_pristine:
+            parts.append(f"{n_pristine} pristine")
+        if n_locked:
+            parts.append(f"{n_locked} locked")
+        print(f"  {DIM}{', '.join(parts)}{RST}")
+    # Show snapshot age
+    try:
+        from torch.verified_snapshots import list_verified_snapshots
+        snapshots = list_verified_snapshots(game_path)
+        if snapshots:
+            from datetime import datetime, timezone
+            ts_str = snapshots[0].get("timestamp", "")
+            if ts_str:
+                ts = datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                age = datetime.now(timezone.utc) - ts
+                if age.days == 0:
+                    age_str = "today"
+                elif age.days == 1:
+                    age_str = "yesterday"
+                else:
+                    age_str = f"{age.days} days ago"
+                colour = GOLD if age.days >= 3 else DIM
+                print(f"  {colour}Last verified snapshot: {age_str}{RST}")
+        else:
+            print(f"  {GOLD}No verified snapshots (use 'torch build' to create one){RST}")
+    except Exception:
+        pass
+
     print(f"  {GOLD}{'=' * 49}{RST}")
     print()
 
@@ -1050,10 +1090,13 @@ def _cmd_status(project_dir, game_path):
         "orphan":            (f"{RED}[  ORPHAN    ]{RST}",    RED),
         "missing_workspace": (f"{RED}[ MISSING WS ]{RST}",   RED),
         "never_written":     (f"{CYAN}[    NEW     ]{RST}",   CYAN),
+        "pristine_stale":    (f"{GOLD}[  OUTDATED  ]{RST}",   GOLD),
     }
 
     registry = load_registry(project_dir)
-    for name in enrolled:
+
+    # Show claimed maps with full health badges
+    for name in by_state.get(STATE_CLAIMED, []):
         health = get_map_health(project_dir, name, game_path)
         badge, colour = _BADGE.get(health, (f"[{health}]", DIM))
         print(f"  {badge}  {WHITE}{name}{RST}")
@@ -1064,6 +1107,32 @@ def _cmd_status(project_dir, game_path):
         else:
             print(f"  {'':>16}{DIM}never written{RST}")
         print()
+
+    # Show locked maps
+    for name in by_state.get(STATE_LOCKED, []):
+        entry = registry["maps"].get(name, {})
+        reason = entry.get("lock_reason", "")
+        reason_str = f" ({reason})" if reason else ""
+        print(f"  {DIM}[  LOCKED   ]{RST}  {WHITE}{name}{RST}")
+        if reason_str:
+            print(f"  {'':>16}{DIM}{reason_str.strip()}{RST}")
+        print()
+
+    # Show pristine maps — collapsed unless --all
+    if n_pristine:
+        if show_all:
+            for name in by_state.get(STATE_PRISTINE, []):
+                health = get_map_health(project_dir, name, game_path)
+                if health == "pristine_stale":
+                    badge = _BADGE["pristine_stale"][0]
+                else:
+                    badge = f"{DIM}[ PRISTINE  ]{RST}"
+                print(f"  {badge}  {DIM}{name}{RST}")
+            print()
+        else:
+            print(f"  {DIM}{n_pristine} pristine maps (auto-decompiled, read-only){RST}")
+            print(f"  {DIM}Use 'torch status --all' to expand{RST}")
+            print()
 
     unenrolled = get_unenrolled_workspace_dirs(project_dir)
     if unenrolled:
@@ -1099,14 +1168,33 @@ def _cmd_enroll(args, project_dir, game_path):
     from torch.registry import (
         enroll_map, bulk_enroll, get_unenrolled_workspace_dirs,
     )
-    if len(args) >= 2 and args[1] == "--all":
-        count, skipped = bulk_enroll(project_dir, game_path)
-        if count:
-            print(f"  Enrolled {count} map(s).")
-        else:
-            print(f"  No new maps to enroll.")
-        if skipped:
-            print(f"  Skipped (no game folder): {', '.join(skipped)}")
+    if len(args) >= 2 and args[1] in ("--all", "--decompile"):
+        from torch.bulk_decompile import bulk_decompile_all_maps
+        from torch.config import load_config
+        _, _, settings = load_config() or (None, None, {})
+        emotes_conf = os.path.join(os.path.dirname(project_dir), "config", "emotes.conf")
+
+        def _progress(map_name, state, idx, total):
+            pct = int((idx + 1) / total * 100) if total else 0
+            print(f"  [{pct:3d}%] {map_name} — {state}")
+
+        print(f"  Decompiling all game maps...")
+        counts = bulk_decompile_all_maps(game_path, project_dir, emotes_conf,
+                                         progress_cb=_progress)
+        print()
+        parts = []
+        if counts.get("pristine"):
+            parts.append(f"{counts['pristine']} pristine")
+        if counts.get("locked"):
+            parts.append(f"{counts['locked']} locked")
+        if counts.get("claimed"):
+            parts.append(f"{counts['claimed']} claimed (existing)")
+        if counts.get("skipped"):
+            parts.append(f"{counts['skipped']} already enrolled")
+        print(f"  {', '.join(parts) if parts else 'No new maps to enroll.'}")
+        if counts.get("errors"):
+            for err in counts["errors"][:5]:
+                print(f"  ERROR: {err}")
     elif len(args) >= 2:
         map_name = args[1]
         if enroll_map(project_dir, map_name):
@@ -1163,6 +1251,41 @@ def _cmd_unenroll(args, project_dir):
         print(f"  Unenrolled: {map_name}")
     else:
         print(f"  '{map_name}' is not enrolled.")
+
+
+def _cmd_lock(args, project_dir):
+    """Handle 'torch lock <MapName> [reason]'."""
+    if not _HAS_REGISTRY:
+        print("  Map Registry is not available in this release.")
+        sys.exit(1)
+    from torch.registry import set_map_state, is_enrolled, STATE_LOCKED
+    if len(args) < 2:
+        print("Usage: torch lock <MapName> [reason]")
+        sys.exit(1)
+    map_name = args[1]
+    if not is_enrolled(project_dir, map_name):
+        print(f"  '{map_name}' is not enrolled.")
+        return
+    reason = " ".join(args[2:]) if len(args) > 2 else None
+    set_map_state(project_dir, map_name, STATE_LOCKED, lock_reason=reason)
+    print(f"  Locked: {map_name}" + (f" ({reason})" if reason else ""))
+
+
+def _cmd_unlock(args, project_dir):
+    """Handle 'torch unlock <MapName>'."""
+    if not _HAS_REGISTRY:
+        print("  Map Registry is not available in this release.")
+        sys.exit(1)
+    from torch.registry import set_map_state, is_enrolled, get_map_state, STATE_CLAIMED
+    if len(args) < 2:
+        print("Usage: torch unlock <MapName>")
+        sys.exit(1)
+    map_name = args[1]
+    if not is_enrolled(project_dir, map_name):
+        print(f"  '{map_name}' is not enrolled.")
+        return
+    set_map_state(project_dir, map_name, STATE_CLAIMED)
+    print(f"  Unlocked: {map_name} (now claimed)")
 
 
 def _cmd_scorch(args, game_path, settings, proj_name):
@@ -2614,6 +2737,8 @@ _CLI_DISPATCH_TABLE = {
     "status":   ("status",   False),
     "enroll":   ("enroll",   False),
     "unenroll": ("unenroll", False),
+    "lock":     ("lock",     False),
+    "unlock":   ("unlock",   False),
     "scorch":   ("scorch",   False),
     "clean":    ("scorch",   False),
     "cleanup":  ("scorch",   False),
@@ -2689,9 +2814,11 @@ def _dispatch_subcommand(cmd, args, proj_name, proj_info, projects, settings,
                                        source_display, settings),
         "sync":     lambda: _cmd_sync(args, project_dir, game_path, emotes_conf,
                                       source_display, settings),
-        "status":   lambda: _cmd_status(project_dir, game_path),
+        "status":   lambda: _cmd_status(project_dir, game_path, show_all="--all" in args),
         "enroll":   lambda: _cmd_enroll(args, project_dir, game_path),
         "unenroll": lambda: _cmd_unenroll(args, project_dir),
+        "lock":     lambda: _cmd_lock(args, project_dir),
+        "unlock":   lambda: _cmd_unlock(args, project_dir),
         "scorch":   lambda: _cmd_scorch(args, game_path, settings, proj_name),
         "sandbox":  lambda: _cmd_sandbox(args, game_path, settings, proj_name),
         "upgrade":  lambda: _cmd_upgrade(args, game_path, settings, proj_name),
