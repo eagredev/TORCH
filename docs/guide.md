@@ -1,6 +1,6 @@
 # TORCH — User Guide
 
-> v0.3.6 | The Open ROM Creation Hub
+> v0.4.0 | The Open ROM Creation Hub
 > For pokeemerald-expansion ROM hacks | Stdlib Python, no pip required
 
 TORCH is a toolkit for Pokemon ROM hackers using the pokeemerald decomp projects. It replaces the tedious parts — hand-editing scripts, managing file structures, cross-referencing documentation — with visual editors and automated pipelines.
