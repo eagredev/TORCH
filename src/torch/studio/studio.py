@@ -1,8 +1,9 @@
-"""ROM Studio — Makefile and ROM header editing.
+"""ROM metadata - Makefile field parsing and editing.
 
-Provides reusable ``read_rom_fields()`` / ``write_rom_field()`` helpers
-consumed by the Settings module (config_tuner.py), plus a legacy
-interactive UI as fallback.
+Reads and writes ROM header fields (game title, game code, maker code)
+from the project Makefile. Provides ``read_rom_fields()`` and
+``write_rom_field()`` consumed by the Settings module, web API, and
+upgrade system.
 """
 # TORCH_MODULE: ROM Studio
 # TORCH_GROUP: Tools

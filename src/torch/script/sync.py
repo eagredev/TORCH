@@ -1,4 +1,10 @@
-"""Sync engine, Map Guard, label validation, snapshot/restore."""
+"""Sync engine - compile TorScript, snapshot, and deploy to game project.
+
+Handles the full sync pipeline: compile workspace .txt files to .pory,
+validate script labels against map.json, snapshot the workspace before
+writing, then deploy compiled scripts and setup.pory to the game's map
+folders. Also provides per-map restore from workspace snapshots.
+"""
 # TORCH_MODULE: Sync Engine
 # TORCH_GROUP: Script Studio
 import os

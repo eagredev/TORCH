@@ -1,12 +1,12 @@
-"""NPC Script Editor — edit simple dialogue NPCs without touching code.
+"""NPC editor - full CRUD for map NPCs with script generation.
 
-Handles the 90% of NPCs that don't need the full Scene Editor: villagers,
-sign posts, item givers, multi-state NPCs. Parses existing scripts from
-.inc and .pory files, edits dialogue with GBA textbox preview, and generates
-new scripts via wizard templates.
-
-Entry points:
-    npc_editor_menu(game_path, map_name, conf)  -- from Map Studio or CLI
+Browse, create, edit, and delete NPCs on any map. Parses existing
+scripts from .pory and .inc files, supports inline dialogue editing
+with GBA text preview, and provides 7 creation wizards (flavor NPC,
+sign, item giver, multi-state, nurse, PC, infrastructure sign).
+Handles alias auto-repair when NPCs are reordered in Porymap, and
+reclaims orphaned flags on deletion. Provides the data layer for
+both the TUI and the web NPC editor.
 """
 # TORCH_MODULE: NPC Editor
 # TORCH_GROUP: Map Studio

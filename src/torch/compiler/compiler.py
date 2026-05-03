@@ -1,4 +1,10 @@
-"""Script compiler — converts .txt TorScript to Poryscript .pory."""
+"""TorScript compiler - converts .txt scripts to Poryscript .pory.
+
+Parses TorScript directives (alias, label, dialogue, movement, emotes,
+flags, give, camera, walkto, page, pory pass-through) and emits valid
+Poryscript. Validates constants (flags, species, items, moves, music,
+sound effects) against game header files at compile time.
+"""
 # TORCH_MODULE: Script Compiler
 # TORCH_GROUP: Script Studio
 import os

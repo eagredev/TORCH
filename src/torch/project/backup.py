@@ -1,4 +1,10 @@
-"""TORCH self-backup system with tiered retention."""
+"""Backup system with tiered retention (hourly, daily, weekly, monthly).
+
+Creates timestamped zip backups of the TORCH package itself. Retention
+policy automatically prunes old backups: keeps recent hourly snapshots,
+one per day for the last week, one per week for the last month, and
+one per month indefinitely.
+"""
 # TORCH_MODULE: Self-Backup
 # TORCH_GROUP: Tools
 # BACKUP_VERSION = "1.2"

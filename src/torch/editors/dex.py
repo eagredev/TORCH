@@ -1,8 +1,11 @@
-"""Dex — read-only species data browser for TORCH.
+"""Dex - searchable Pokemon species browser.
 
-Provides an interactive terminal browser for Pokemon species data including
-base stats, types, abilities, learnsets, and evolution chains.
-Invoked via ``torch dex`` or main menu option [8].
+TUI and web browser for species data: base stats, types, abilities,
+learnsets (level-up, teachable, egg), evolution chains, shiny sprites,
+and form variants. Supports filtering by type, generation, and name.
+Also provides the data layer for the web Dex view and Studio widget.
+
+CLI entry: ``torch dex``
 """
 # TORCH_MODULE: Dex
 # TORCH_GROUP: Data

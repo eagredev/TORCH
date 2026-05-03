@@ -1,4 +1,11 @@
-"""Pory-to-TorScript decompiler — converts .pory Poryscript back to .txt TorScript."""
+"""Poryscript-to-TorScript decompiler (.pory -> .txt).
+
+Reverses the compiler: parses Poryscript control flow (if/elif/else,
+switch/case, while), movement data arrays, msgbox calls, trainerbattle
+text, and emote constants back into human-readable TorScript beats.
+Achieves ~86% line reduction on typical vanilla scripts. Also handles
+text inlining, Common_Movement resolution, and condition reversal.
+"""
 # TORCH_MODULE: Script Decompiler
 # TORCH_GROUP: Script Studio
 import re

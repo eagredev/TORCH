@@ -1,4 +1,4 @@
-"""Pure data constants for TORCH — emotes, movement commands, catalogs."""
+"""Pure data constants - emotes, movement commands, and catalogs."""
 # TORCH_MODULE: Data Constants
 # TORCH_GROUP: Core
 import re

@@ -1,4 +1,10 @@
-"""Assembly-to-Poryscript decompiler — converts .inc scripts to .pory."""
+"""Assembly-to-Poryscript decompiler (.inc -> .pory).
+
+Converts vanilla pokeemerald assembly scripts (.inc) to Poryscript.
+Handles mapscripts, movement data, text labels, trainerbattle macros,
+goto_if/call_if control flow, and special commands. Successfully
+decompiles all 468 vanilla scripts.inc files.
+"""
 # TORCH_MODULE: Inc Decompiler
 # TORCH_GROUP: Script Studio
 import re

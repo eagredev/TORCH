@@ -1,4 +1,4 @@
-"""Map Registry — persistent enrollment and health tracking for TORCH-managed maps."""
+"""Map registry - persistent enrollment and health tracking for managed maps."""
 # TORCH_MODULE: Map Registry
 # TORCH_GROUP: Core
 import os

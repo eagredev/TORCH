@@ -1,4 +1,9 @@
-"""Studio hub -- map browser, script list, new script wizard."""
+"""Script Studio hub - map browser, script list, and new script wizard.
+
+Top-level TUI for the script workflow: browse enrolled maps, list
+scripts per map, create new scripts from templates, and launch the
+beat editor. Also provides the ``torch script MapName`` entry point.
+"""
 # TORCH_MODULE: Script Hub
 # TORCH_GROUP: Studio
 import os

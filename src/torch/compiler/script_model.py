@@ -1,4 +1,10 @@
-"""Script Editor data model — beat types, parser, serializer, help system."""
+"""Script data model - beat types, parser, serializer, and help system.
+
+Defines the beat abstraction (dialogue, movement, emote, flag, give,
+camera, etc.) that both the TUI script editor and web script editor
+operate on. Parses .txt workspace files into beat lists and serializes
+them back. Also provides the inline help/reference system.
+"""
 # TORCH_MODULE: Script Model
 # TORCH_GROUP: Script Studio
 import os

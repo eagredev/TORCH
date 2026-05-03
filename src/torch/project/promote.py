@@ -1,13 +1,8 @@
-"""Non-interactive build promotion for TORCH.
+"""Non-interactive build promotion.
 
-Usage (called by Claude after version bumps):
-    python3 ~/torch_dev/promote.py [--stable]
-
-Default: promotes to experimental.
-With --stable: promotes to stable.
-
-This does what vc.py's [1] Promote Build does, minus the interactive menus.
-All production modules are included (no checklist — everything ships).
+Copies the dev package to the experimental or stable install location
+without interactive menus. Used for automated promotion after version
+bumps. Equivalent to vc.py's Promote Build flow.
 """
 # TORCH_MODULE: Build Promoter
 # TORCH_GROUP: Dev Tools

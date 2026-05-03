@@ -1,4 +1,10 @@
-"""New Battle Wizard, Showdown parser, dialogue helpers, and battle menus."""
+"""Trainer creation wizard with Pokemon Showdown import.
+
+Guided wizard for creating new trainers: species picker, moveset
+builder, EV/IV entry, held items, AI flag selection, and intro/defeat
+dialogue with GBA text preview. Also parses Showdown team exports
+for quick trainer setup.
+"""
 # TORCH_MODULE: Battle Wizard
 # TORCH_GROUP: Trainers
 import os

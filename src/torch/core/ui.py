@@ -1,4 +1,10 @@
-"""UI helpers, logo display, and formatting for TORCH."""
+"""UI framework - terminal rendering, build pipeline, and shared prompts.
+
+Provides the logo, clear screen, terminal title, menu formatting,
+dialogue prompts with GBA text preview, the build assistant (pre-build
+safety chain + make invocation + error diagnosis), and the build-offer
+flow used after sync and SCORCH operations.
+"""
 # TORCH_MODULE: UI Helpers
 # TORCH_GROUP: Core
 import json

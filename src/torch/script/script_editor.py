@@ -1,4 +1,11 @@
-"""Script editor loop, renderer, cast editor, beat prompts, storyboard."""
+"""TUI script editor - beat-by-beat TorScript authoring.
+
+Interactive terminal editor for composing scripts as sequences of
+beats (dialogue, movement, emotes, camera, flags, etc.). Provides
+the edit loop, beat-type prompts, cast/alias management, storyboard
+preview, and movement block editing. The web equivalent lives in
+web/static/views/viz/.
+"""
 # TORCH_MODULE: Script Editor
 # TORCH_GROUP: Script Studio
 import json

@@ -1,4 +1,10 @@
-"""Trainer list, card flow, deletion, recovery, and battle menus."""
+"""Trainer manager - top-level TUI for browsing, editing, and creating trainers.
+
+Provides the scrolling trainer list, card detail flow, party editing,
+trainer deletion with recovery, and the new trainer wizard. Orchestrates
+battle_io (parsing), battle_card (display), battle_wizard (creation),
+and battle_migrator (format conversion).
+"""
 # TORCH_MODULE: Trainer Manager
 # TORCH_GROUP: Trainers
 import os

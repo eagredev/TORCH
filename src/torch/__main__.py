@@ -1,52 +1,11 @@
-"""
-TORCH — The Open ROM Creation Hub for pokeemerald-expansion.
+"""TORCH - The Open ROM Creation Hub for pokeemerald-expansion.
 
-Compiles simplified script notation (.txt) into Poryscript (.pory),
-then syncs assembled scripts into the game's map folders.
+CLI entry point and main menu. Dispatches to all subsystems: TorScript
+compiler, sync engine, web GUI, data editors, SCORCH, and project tools.
 
-Usage:
-    torch init                   First-time setup (creates ~/.config/torch/torch.conf)
-    torch update [source]        Update TORCH from a stable release zip
-    torch <script_name>          Compile a single .txt file (standalone)
-    torch sync [MapName]         Sync workspace to game folder
-    torch build                  Build ROM with auto-sync and error diagnosis
-    torch restore                Restore from a verified build snapshot
-    torch restore <MapName>      Restore from a workspace snapshot
-    torch backup [tag]           Backup torch.py with tiered retention
-    torch backup list            Show all torch.py backups with tier labels
-    torch backup prune           Prune backups according to retention policy
-    torch script                 Script Studio — browse and edit map scripts
-    torch scene                  Script Studio (alias for torch script)
-    torch map                    Script Studio (alias for torch script)
-    torch status                 Show enrolled maps with health indicators
-    torch enroll [MapName|--all] Enroll maps in the registry
-    torch unenroll <MapName>     Remove a map from the registry
-    torch scorch                 SCORCH — scan & remove vanilla content
-    torch scorch <category>      Category-specific removal (maps, trainers, etc.)
-    torch scorch report          Scan-only report
-    torch scorch restore         Restore from SCORCH snapshot
-    torch scorch phoenix         Phoenix — remove ALL vanilla maps/trainers/encounters
-    torch scorch phoenix plan    Phoenix dry-run report
-    torch scorch phoenix restore Restore from Phoenix snapshot
-    torch wild                   Encounter Editor — edit wild Pokemon encounters
-    torch tweak                  Settings — browse and edit game settings
-    torch settings               Settings (alias for torch tweak)
-    torch dex                    Dex — browse & look up Pokemon data
-    torch heal                   Heal Location Manager — edit heal locations
-    torch assets                 Asset Manager — import custom game assets
-    torch items                  Item Editor — browse and edit game items
-    torch learnsets              Learnset Editor — view & edit Pokemon learnsets
-    torch tileset                Tileset Assistant — create & manage tilesets
-    torch explore                Map Explorer — browse connectivity & find paths
-    torch explore <MapName>      Map detail view for a specific map
-    torch music                  Music Browser — browse & preview game music
-    torch new                    Create a fresh project from GitHub
-    torch upgrade                Upgrade pokeemerald-expansion to a newer version
-    torch upgrade --check        Show current version and available updates
-    torch upgrade --to X.Y.Z    Upgrade to a specific version
-    torch gui                    Launch the TORCH web GUI (standalone window)
-    torch gui --app              Force standalone mode (fail if no browser)
-    torch gui --browser          Force regular browser mode (no standalone)
+Run ``python3 ~/torch`` with no arguments for the interactive menu, or
+pass a subcommand directly (e.g. ``torch studio``, ``torch build``).
+Run ``torch --help`` or see docs/guide.md for the full command list.
 """
 # TORCH_MODULE: Entry Point
 # TORCH_GROUP: Core

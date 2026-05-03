@@ -1,3 +1,9 @@
+"""Config system - INI-based project and preference management.
+
+Reads and writes ``~/.config/torch/torch.conf``. Handles project
+resolution (single or multi-project), workspace path discovery,
+navigation key preferences, and the active project selector.
+"""
 # TORCH_MODULE: Config System
 # TORCH_GROUP: Core
 import sys, os, configparser
