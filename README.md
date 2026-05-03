@@ -4,7 +4,7 @@
 
 TORCH replaces the scattered workflow of ROM hacking - switching between text editors, Poryscript docs, Porymap, header files, and terminal commands - with a single tool that handles scripting, NPC editing, trainer and encounter management, content removal, and ROM building. Scripts are written in TorScript, a human-readable language that compiles to Poryscript automatically. Everything else is edited through a localhost web IDE or a full-featured terminal interface. Zero pip dependencies. Zero npm. Just Python and your pokeemerald project.
 
-<!-- SCREENSHOT: TORCH Studio showing a map loaded in the canvas with the NPCs tab open and a dialogue editor visible in the right panel. Dark theme. This is the most important image in the README - aim for an ~800px wide PNG. -->
+![TORCH Studio - map editor with NPC sprites, toolbar, and property panels](docs/screenshots/studio.png)
 
 ---
 
@@ -12,21 +12,29 @@ TORCH replaces the scattered workflow of ROM hacking - switching between text ed
 
 ### TORCH Studio
 
-<!-- SCREENSHOT: Three-panel Studio layout - map canvas left, 8-tab right panel (Props/NPCs/Enc/Warps/Scripts/Flags/Shops/Trainers), toolbar on top. Show a real map with NPC cards visible. -->
-
 A three-panel workspace modelled after Porymap and RPG Maker. Map canvas on the left renders the selected map with NPC sprites at their actual positions. The right panel has eight tabs - Props, NPCs, Encounters, Warps, Scripts, Flags, Shops, Trainers - that load lazily when selected. NPCs can be created, edited, and deleted inline without leaving the canvas view.
 
 Vanilla NPCs (those using the decomp's original `.pory` or `.inc` scripts) can be decompiled to editable TorScript in one click. The decompiler handles Poryscript control flow, movement blocks, trainer battles, and text inlining, reducing a typical vanilla script from hundreds of lines to a dozen.
 
 ### Script Editor
 
-<!-- GIF: Click an NPC on the canvas -> the Scripts tab opens with a beat list -> type dialogue into the dialogue beat editor -> the GBA text preview updates live. ~10 seconds. -->
+![Script Editor - beat list, map canvas with NPC labels, dialogue editing panel](docs/screenshots/script-editor.png)
 
 Scripts are composed as a sequence of "beats" - dialogue, movement, emotes, camera work, sound, flags, conditionals - each with a dedicated editor. A live GBA text preview renders text exactly as it appears in-game, including the font, box layout, and pagination. The compiler validates flag names, species, items, moves, music, and sound effects against your project's actual header files; typos are caught at compile time, not after a five-minute ROM build.
 
+### Data Editors
+
+![Trainer Editor - Wally's team with sprites, movesets, EVs, and AI flags](docs/screenshots/trainer-editor.png)
+
+![Encounter Editor - Route 133 water encounters with species, levels, and rate bars](docs/screenshots/encounter-editor.png)
+
+### Dex
+
+![Dex - searchable species browser with sprites and type badges](docs/screenshots/dex.png)
+
 ### TUI
 
-<!-- SCREENSHOT: Terminal showing the TORCH main menu or the script studio with a script loaded. -->
+![Terminal interface - main menu, script studio, encounters, and build output](docs/screenshots/tui.png)
 
 Everything works from the terminal too. Scrolling list menus, inline editors, and a full script studio - no browser required. Useful for headless workflows or for users who prefer staying in the terminal.
 
@@ -100,8 +108,6 @@ The decompiler goes the other direction: paste a `.pory` or `.inc` script and ge
 - **Music browser** - browse and preview game tracks with GBA-accurate rendering via poryaaaa or a built-in MIDI synth fallback
 
 ### Worldstate Simulator
-
-<!-- SCREENSHOT: Studio canvas with the Worldstate Simulator panel open - showing flags toggled and NPCs ghosted/repositioned in response. -->
 
 Toggle flags and variables in a side panel and watch NPCs ghost, move, and swap sprites in real time on the map canvas. Useful for checking that conditional NPC states look correct without building the ROM.
 
